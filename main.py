@@ -7,8 +7,7 @@ load_dotenv()
 app = FastAPI()
 
 API_TOKEN = os.getenv("SEATABLE_API_TOKEN")
-BASE_URL = os.getenv("SEATABLE_BASE_URL")            # Use https://cloud.seatable.io
-BASE_UUID = os.getenv("SEATABLE_BASE_UUID")          # Example: 000414eb-ebac-4fa9-ab3e-c26c0061db87
+BASE_UUID = os.getenv("SEATABLE_BASE_UUID")
 
 def get_headers():
     return {
@@ -23,8 +22,9 @@ def home():
 @app.get("/crm/leads")
 def get_leads():
     try:
-        url = f"{BASE_URL}/api-gateway/api/v2/dtables/{BASE_UUID}/rows/?table_name=praveen"
-        response = requests.get(url, headers=get_headers())
+        headers = get_headers()
+        url = f"https://cloud.seatable.io/api-gateway/dtable/v1/dtables/{BASE_UUID}/rows/?table_name=EdgeTag_1P_2P"
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -33,8 +33,9 @@ def get_leads():
 @app.get("/crm/schema")
 def get_schema():
     try:
-        url = f"{BASE_URL}/api/v2.1/dtable/{BASE_UUID}/tables/"
-        response = requests.get(url, headers=get_headers())
+        headers = get_headers()
+        url = f"https://cloud.seatable.io/api/v2.1/dtable/{BASE_UUID}/tables/"
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
     except Exception as e:
