@@ -1,16 +1,20 @@
 from fastapi import FastAPI, HTTPException
-import requests, os
+import requests
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
 app = FastAPI()
 
 API_TOKEN = os.getenv("SEATABLE_API_TOKEN")
-BASE_URL = os.getenv("SEATABLE_BASE_URL")            # e.g. https://cloud.seatable.io
-BASE_UUID = os.getenv("SEATABLE_BASE_UUID")          # e.g. 0004...db87
+BASE_URL = os.getenv("SEATABLE_BASE_URL")            # Use https://cloud.seatable.io
+BASE_UUID = os.getenv("SEATABLE_BASE_UUID")          # Example: 000414eb-ebac-4fa9-ab3e-c26c0061db87
 
 def get_headers():
-    return {"Authorization": f"Token {API_TOKEN}", "Accept": "application/json"}
+    return {
+        "Authorization": f"Token {API_TOKEN}",
+        "Accept": "application/json"
+    }
 
 @app.get("/")
 def home():
