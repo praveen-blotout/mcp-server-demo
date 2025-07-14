@@ -4,14 +4,12 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 app = FastAPI()
 
-# Google Sheets setup
+# Google Sheets Setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-# Load creds from environment variable
 google_creds_json = os.getenv("GOOGLE_CLIENT_JSON")
 
 if not google_creds_json:
@@ -24,7 +22,7 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to initialize Google Sheets client: {e}")
 
-# Configs
+# Sheet Config
 SHEET_NAME = "mcp"
 TAB_NAME = "Sheet1"
 
@@ -33,11 +31,32 @@ def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
 
 @app.get("/crm/leads")
-def get_leads():
+def get_leads(
+    domain: Optional[str] = None,
+    platform: Optional[str] = None,
+    billingtype: Optional[str] = None,
+    type: Optional[str] = None,
+    cartrecoverymode: Optional[str] = None
+):
     try:
         sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
         rows = sheet.get_all_records()
-        return {"leads": rows}
+
+        filtered_rows = []
+        for row in rows:
+            if domain and domain.lower() not in row.get("Domain", "").lower():
+                continue
+            if platform and platform.lower() not in row.get("Platform", "").lower():
+                continue
+            if billingtype and billingtype.lower() not in row.get("BillingType", "").lower():
+                continue
+            if type and type.lower() not in row.get("Type", "").lower():
+                continue
+            if cartrecoverymode and cartrecoverymode.lower() not in row.get("CartRecoveryMode", "").lower():
+                continue
+            filtered_rows.append(row)
+
+        return {"leads": filtered_rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
 
@@ -54,5 +73,6 @@ def add_lead(lead: Lead):
         return {"message": "Lead added successfully ✅"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to add lead: {e}")
+
 
 
