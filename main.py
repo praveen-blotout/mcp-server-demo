@@ -24,7 +24,7 @@ def home():
 def get_leads():
     try:
         headers = get_headers()
-        url = f"{BASE_URL}/dtable-server/api/v1/dtables/{BASE_UUID}/rows/?table_name=EdgeTag_1P_2P"
+        url = f"{BASE_URL}/dtable-server/api/v1/dtables/{BASE_UUID}/rows/?table_name=praveen"
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
