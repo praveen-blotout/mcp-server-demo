@@ -1,42 +1,29 @@
 from fastapi import FastAPI, HTTPException
-import requests
-import os
-from dotenv import load_dotenv
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-load_dotenv()
 app = FastAPI()
 
-API_TOKEN = os.getenv("SEATABLE_API_TOKEN")
-BASE_UUID = os.getenv("SEATABLE_BASE_UUID")
+# Setup scope and auth
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+creds = ServiceAccountCredentials.from_json_keyfile_name("google_client.json", scope)
+client = gspread.authorize(creds)
 
-def get_headers():
-    return {
-        "Authorization": f"Token {API_TOKEN}",
-        "Accept": "application/json"
-    }
+# Connect to your Google Sheet by ID
+SHEET_ID = "1PxUi5ZKsMMnzm6cCMMqB8Qc-vGAkRQu5k4ukS1NVaBM"
+sheet = client.open_by_key(SHEET_ID).sheet1  # access first tab
 
 @app.get("/")
-def home():
-    return {"message": "SeaTable MCP Server is running 🚀"}
+def root():
+    return {"message": "Google Sheet CRM is running 🚀"}
 
 @app.get("/crm/leads")
 def get_leads():
     try:
-        headers = get_headers()
-        url = f"https://cloud.seatable.io/api-gateway/dtable/v1/dtables/{BASE_UUID}/rows/?table_name=EdgeTag_1P_2P"
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/crm/schema")
-def get_schema():
-    try:
-        headers = get_headers()
-        url = f"https://cloud.seatable.io/api/v2.1/dtable/{BASE_UUID}/tables/"
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
+        leads = sheet.get_all_records()
+        return {"leads": leads}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
