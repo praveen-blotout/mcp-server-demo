@@ -1,20 +1,16 @@
 from fastapi import FastAPI, HTTPException
-import requests
-import os
+import requests, os
 from dotenv import load_dotenv
 
 load_dotenv()
 app = FastAPI()
 
 API_TOKEN = os.getenv("SEATABLE_API_TOKEN")
-BASE_URL = os.getenv("SEATABLE_BASE_URL")
-BASE_UUID = os.getenv("SEATABLE_BASE_UUID")
+BASE_URL = os.getenv("SEATABLE_BASE_URL")            # e.g. https://cloud.seatable.io
+BASE_UUID = os.getenv("SEATABLE_BASE_UUID")          # e.g. 0004...db87
 
 def get_headers():
-    return {
-        "Authorization": f"Token {API_TOKEN}",
-        "Accept": "application/json"
-    }
+    return {"Authorization": f"Token {API_TOKEN}", "Accept": "application/json"}
 
 @app.get("/")
 def home():
@@ -23,27 +19,19 @@ def home():
 @app.get("/crm/leads")
 def get_leads():
     try:
-        headers = get_headers()
-        url = f"{BASE_URL}/api/v2.1/dtable/{BASE_UUID}/rows/?table_name=praveen"
-        print(f"Fetching leads from: {url}")
-        response = requests.get(url, headers=headers)
+        url = f"{BASE_URL}/api-gateway/api/v2/dtables/{BASE_UUID}/rows/?table_name=praveen"
+        response = requests.get(url, headers=get_headers())
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        print("Error in /crm/leads:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/crm/schema")
 def get_schema():
     try:
-        headers = get_headers()
         url = f"{BASE_URL}/api/v2.1/dtable/{BASE_UUID}/tables/"
-        print(f"Fetching schema from: {url}")
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=get_headers())
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        print("Error in /crm/schema:", e)
         raise HTTPException(status_code=500, detail=str(e))
-
-
