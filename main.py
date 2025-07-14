@@ -24,21 +24,26 @@ def home():
 def get_leads():
     try:
         headers = get_headers()
-        url = f"{BASE_URL}/dtable-server/api/v1/dtables/{BASE_UUID}/rows/?table_name=praveen"
+        url = f"{BASE_URL}/api/v2.1/dtable/{BASE_UUID}/rows/?table_name=praveen"
+        print(f"Fetching leads from: {url}")
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
     except Exception as e:
+        print("Error in /crm/leads:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/crm/schema")
 def get_schema():
     try:
         headers = get_headers()
-        url = f"{BASE_URL}/dtable-server/api/v1/dtables/{BASE_UUID}/tables/"
+        url = f"{BASE_URL}/api/v2.1/dtable/{BASE_UUID}/tables/"
+        print(f"Fetching schema from: {url}")
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
     except Exception as e:
+        print("Error in /crm/schema:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
 
