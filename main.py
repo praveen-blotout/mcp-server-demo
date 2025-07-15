@@ -27,6 +27,30 @@ except Exception as e:
 SHEET_NAME = "mcp"
 TAB_NAME = "Sheet1"
 
+# Utility: filter and return list of dicts
+def get_filtered_data(
+    sheet_name: str,
+    tab_name: str,
+    filters: dict = {}
+) -> List[dict]:
+    try:
+        sheet = client.open(sheet_name).worksheet(tab_name)
+        rows = sheet.get_all_records()
+
+        filtered = []
+        for row in rows:
+            match = True
+            for key, value in filters.items():
+                if value and value.lower() not in str(row.get(key, "")).lower():
+                    match = False
+                    break
+            if match:
+                filtered.append(row)
+
+        return filtered
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch data: {e}")
+
 @app.get("/")
 def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
@@ -40,30 +64,15 @@ def get_leads(
     cartrecoverymode: Optional[str] = None
 ):
     try:
-        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
-        rows = sheet.get_all_records()
-
-        filtered_rows = []
-        for row in rows:
-            if domain and domain.lower() not in row.get("Domain", "").lower():
-                continue
-            if platform and platform.lower() not in row.get("Platform", "").lower():
-                continue
-            if billingtype and billingtype.lower() not in row.get("BillingType", "").lower():
-                continue
-            if type and type.lower() not in row.get("Type", "").lower():
-                continue
-            if cartrecoverymode and cartrecoverymode.lower() not in row.get("CartRecoveryMode", "").lower():
-                continue
-            filtered_rows.append(row)
-
-        if not filtered_rows:
-            return JSONResponse(content={"headers": [], "rows": []})
-
-        headers = list(filtered_rows[0].keys())
-        rows = [list(item.values()) for item in filtered_rows]
-
-        return JSONResponse(content={"headers": headers, "rows": rows})
+        filters = {
+            "Domain": domain,
+            "Platform": platform,
+            "BillingType": billingtype,
+            "Type": type,
+            "CartRecoveryMode": cartrecoverymode,
+        }
+        data = get_filtered_data(SHEET_NAME, TAB_NAME, filters)
+        return JSONResponse(content=data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
 
