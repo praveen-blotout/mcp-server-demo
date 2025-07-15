@@ -41,32 +41,29 @@ def get_leads(
 ):
     try:
         sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
-        all_values = sheet.get_all_values()
+        rows = sheet.get_all_records()
 
-        if not all_values or len(all_values) < 2:
-            return JSONResponse(content={"headers": [], "rows": []}, indent=2)
-
-        headers = all_values[0]
-        data_rows = all_values[1:]
-
-        # Apply filters
         filtered_rows = []
-        for row in data_rows:
-            row_dict = dict(zip(headers, row))
-            if domain and domain.lower() not in row_dict.get("Domain", "").lower():
+        for row in rows:
+            if domain and domain.lower() not in row.get("Domain", "").lower():
                 continue
-            if platform and platform.lower() not in row_dict.get("Platform", "").lower():
+            if platform and platform.lower() not in row.get("Platform", "").lower():
                 continue
-            if billingtype and billingtype.lower() not in row_dict.get("BillingType", "").lower():
+            if billingtype and billingtype.lower() not in row.get("BillingType", "").lower():
                 continue
-            if type and type.lower() not in row_dict.get("Type", "").lower():
+            if type and type.lower() not in row.get("Type", "").lower():
                 continue
-            if cartrecoverymode and cartrecoverymode.lower() not in row_dict.get("CartRecoveryMode", "").lower():
+            if cartrecoverymode and cartrecoverymode.lower() not in row.get("CartRecoveryMode", "").lower():
                 continue
-            filtered_rows.append([row_dict.get(h, "") for h in headers])
+            filtered_rows.append(row)
 
-        return JSONResponse(content={"headers": headers, "rows": filtered_rows}, indent=2)
+        if not filtered_rows:
+            return JSONResponse(content={"headers": [], "rows": []})
 
+        headers = list(filtered_rows[0].keys())
+        rows = [list(item.values()) for item in filtered_rows]
+
+        return JSONResponse(content={"headers": headers, "rows": rows})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
 
