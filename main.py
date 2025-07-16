@@ -12,7 +12,7 @@ import io
 
 app = FastAPI()
 
-# API Key Middleware
+# ✅ API Key Verification Dependency
 def verify_api_key(x_api_key: Optional[str] = Header(None)):
     secret = os.getenv("API_SECRET_KEY")
     if not secret:
@@ -20,7 +20,7 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
     if x_api_key != secret:
         raise HTTPException(status_code=403, detail="Invalid API key")
 
-# Google Sheets setup
+# ✅ Google Sheets Setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 google_creds_json = os.getenv("GOOGLE_CLIENT_JSON")
 
@@ -37,7 +37,7 @@ except Exception as e:
 SHEET_NAME = "mcp"
 TAB_NAME = "Sheet1"
 
-# Utility
+# ✅ Data Filter Utility
 def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> List[dict]:
     try:
         sheet = client.open(sheet_name).worksheet(tab_name)
@@ -56,13 +56,13 @@ def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> Lis
     except Exception as e:
         raise RuntimeError(f"Failed to fetch data: {e}")
 
-# Models
+# ✅ Models
 class Lead(BaseModel):
     name: str
     email: str
     phone: str
 
-# Routes
+# ✅ Routes
 @app.get("/", dependencies=[Depends(verify_api_key)])
 def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
@@ -128,7 +128,7 @@ def export_leads_csv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export leads: {e}")
 
-# 🔧 Custom OpenAPI to match Claude’s expectation
+# ✅ Custom OpenAPI Schema to include servers and security
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
