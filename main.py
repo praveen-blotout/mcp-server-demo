@@ -1,62 +1,48 @@
-from fastapi import FastAPI, HTTPException, Header, Depends
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import os
 import json
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import csv
-import io
+import logging
+import time
+from datetime import datetime
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# ✅ Add CORS middleware for Claude
+# ✅ Add CORS middleware - Very permissive for debugging
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with Claude's domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Google Sheets Setup
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-google_creds_json = os.getenv("GOOGLE_CLIENT_JSON")
-
-if not google_creds_json:
-    raise RuntimeError("GOOGLE_CLIENT_JSON environment variable is not set.")
-
-try:
-    creds_dict = json.loads(google_creds_json)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-except Exception as e:
-    raise RuntimeError(f"Failed to initialize Google Sheets client: {e}")
-
-SHEET_NAME = "mcp"
-TAB_NAME = "Sheet1"
-
-# ✅ Data Filter Utility
-def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> List[dict]:
-    try:
-        sheet = client.open(sheet_name).worksheet(tab_name)
-        rows = sheet.get_all_records()
-
-        filtered = []
-        for row in rows:
-            match = True
-            for key, value in filters.items():
-                if value and value.lower() not in str(row.get(key, "")).lower():
-                    match = False
-                    break
-            if match:
-                filtered.append(row)
-        return filtered
-    except Exception as e:
-        raise RuntimeError(f"Failed to fetch data: {e}")
+# ✅ Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    
+    # Log the incoming request
+    logger.info(f"🔵 INCOMING REQUEST: {request.method} {request.url}")
+    logger.info(f"🔵 Headers: {dict(request.headers)}")
+    logger.info(f"🔵 Client IP: {request.client.host if request.client else 'Unknown'}")
+    
+    # Process the request
+    response = await call_next(request)
+    
+    # Log the response
+    process_time = time.time() - start_time
+    logger.info(f"🟢 RESPONSE: {response.status_code} | Time: {process_time:.3f}s")
+    
+    return response
 
 # ✅ Models
 class Lead(BaseModel):
@@ -64,103 +50,93 @@ class Lead(BaseModel):
     email: str
     phone: str
 
-# ✅ COMPLETELY PUBLIC ENDPOINTS (NO AUTH)
+# ✅ Completely public endpoints
 @app.get("/")
 def read_root():
-    return {"message": "✅ Google Sheets MCP Server is running 🚀", "status": "healthy"}
+    logger.info("✅ Root endpoint accessed")
+    return {
+        "message": "✅ Google Sheets MCP Server is running 🚀", 
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "endpoints": [
+            "/",
+            "/openapi.json", 
+            "/docs",
+            "/health",
+            "/test"
+        ]
+    }
 
+@app.get("/health")
+def health_check():
+    logger.info("✅ Health endpoint accessed")
+    return {
+        "status": "healthy",
+        "service": "MCP CRM API",
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/test")
+def test_endpoint():
+    logger.info("✅ Test endpoint accessed")
+    return {
+        "status": "success",
+        "message": "Test endpoint working",
+        "timestamp": datetime.now().isoformat()
+    }
+
+# ✅ Mock data endpoint (no Google Sheets dependency)
 @app.get("/crm/leads")
-def get_leads_public(
+def get_leads_mock(
     domain: Optional[str] = None,
     platform: Optional[str] = None,
-    billingtype: Optional[str] = None,
-    type: Optional[str] = None,
-    cartrecoverymode: Optional[str] = None,
-    api_key: Optional[str] = None  # Optional API key for internal use
+    limit: Optional[int] = 10
 ):
-    # Optional API key validation (but don't require it)
-    secret = os.getenv("API_SECRET_KEY")
-    if api_key and secret and api_key != secret:
-        raise HTTPException(status_code=403, detail="Invalid API key")
+    logger.info(f"✅ Leads endpoint accessed with filters: domain={domain}, platform={platform}")
     
-    try:
-        filters = {
-            "Domain": domain,
-            "Platform": platform,
-            "BillingType": billingtype,
-            "Type": type,
-            "CartRecoveryMode": cartrecoverymode,
-        }
-        data = get_filtered_data(SHEET_NAME, TAB_NAME, filters)
-        return JSONResponse(content=data)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
+    # Return mock data for testing
+    mock_data = [
+        {"id": 1, "name": "John Doe", "email": "john@example.com", "domain": "tech", "platform": "web"},
+        {"id": 2, "name": "Jane Smith", "email": "jane@example.com", "domain": "finance", "platform": "mobile"},
+        {"id": 3, "name": "Bob Johnson", "email": "bob@example.com", "domain": "tech", "platform": "web"}
+    ]
+    
+    # Apply filters if provided
+    filtered_data = mock_data
+    if domain:
+        filtered_data = [item for item in filtered_data if domain.lower() in item["domain"].lower()]
+    if platform:
+        filtered_data = [item for item in filtered_data if platform.lower() in item["platform"].lower()]
+    
+    # Apply limit
+    if limit:
+        filtered_data = filtered_data[:limit]
+    
+    return JSONResponse(content={
+        "data": filtered_data,
+        "count": len(filtered_data),
+        "filters_applied": {"domain": domain, "platform": platform},
+        "timestamp": datetime.now().isoformat()
+    })
 
 @app.post("/crm/leads")
-def add_lead_public(lead: Lead, api_key: Optional[str] = None):
-    # Optional API key validation
-    secret = os.getenv("API_SECRET_KEY")
-    if api_key and secret and api_key != secret:
-        raise HTTPException(status_code=403, detail="Invalid API key")
-    
-    try:
-        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
-        sheet.append_row([lead.name, lead.email, lead.phone])
-        return {"message": "Lead added successfully ✅"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to add lead: {e}")
+def add_lead_mock(lead: Lead):
+    logger.info(f"✅ Add lead endpoint accessed with data: {lead.model_dump()}")
+    return {
+        "message": "Lead added successfully ✅", 
+        "lead": lead.model_dump(),
+        "timestamp": datetime.now().isoformat()
+    }
 
-@app.get("/crm/leads/export")
-def export_leads_public(
-    domain: Optional[str] = None,
-    platform: Optional[str] = None,
-    billingtype: Optional[str] = None,
-    type: Optional[str] = None,
-    cartrecoverymode: Optional[str] = None,
-    api_key: Optional[str] = None
-):
-    # Optional API key validation
-    secret = os.getenv("API_SECRET_KEY")
-    if api_key and secret and api_key != secret:
-        raise HTTPException(status_code=403, detail="Invalid API key")
-    
-    try:
-        filters = {
-            "Domain": domain,
-            "Platform": platform,
-            "BillingType": billingtype,
-            "Type": type,
-            "CartRecoveryMode": cartrecoverymode,
-        }
-        data = get_filtered_data(SHEET_NAME, TAB_NAME, filters)
-
-        if not data:
-            raise HTTPException(status_code=404, detail="No data found for the given filters")
-
-        output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=data[0].keys())
-        writer.writeheader()
-        for row in data:
-            writer.writerow(row)
-
-        output.seek(0)
-        return StreamingResponse(
-            io.BytesIO(output.getvalue().encode('utf-8')), 
-            media_type="text/csv", 
-            headers={"Content-Disposition": "attachment; filename=leads.csv"}
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to export leads: {e}")
-
-# ✅ Simple OpenAPI with NO SECURITY
+# ✅ Very simple OpenAPI - no security at all
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
 
     openapi_schema = get_openapi(
-        title="MCP CRM API",
+        title="Debug MCP CRM API",
         version="1.0.0",
-        description="Public CRM API for Claude connection",
+        description="Debug version of CRM API for Claude connection testing",
         routes=app.routes,
     )
 
@@ -172,19 +148,43 @@ def custom_openapi():
         }
     ]
 
-    # ✅ NO SECURITY SCHEMES AT ALL - Make it completely public
-    # Remove all security from all endpoints
+    # Remove all security requirements
     for path_name, path_item in openapi_schema["paths"].items():
         for method_name, method_item in path_item.items():
-            # Remove any security requirements
             if "security" in method_item:
                 del method_item["security"]
+    
+    # Remove global security if it exists
+    if "security" in openapi_schema:
+        del openapi_schema["security"]
+    
+    # Remove security schemes
+    if "components" in openapi_schema and "securitySchemes" in openapi_schema["components"]:
+        del openapi_schema["components"]["securitySchemes"]
 
+    logger.info("✅ OpenAPI schema generated")
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
-# Set the custom OpenAPI function
 app.openapi = custom_openapi
+
+# ✅ Add docs endpoint for debugging
+@app.get("/debug")
+def debug_info():
+    return {
+        "message": "Debug information",
+        "openapi_url": "/openapi.json",
+        "docs_url": "/docs",
+        "endpoints": [
+            "GET /",
+            "GET /health", 
+            "GET /test",
+            "GET /crm/leads",
+            "POST /crm/leads",
+            "GET /openapi.json"
+        ],
+        "timestamp": datetime.now().isoformat()
+    }
 
 if __name__ == "__main__":
     import uvicorn
