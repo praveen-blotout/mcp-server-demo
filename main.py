@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -29,7 +29,14 @@ except Exception as e:
 SHEET_NAME = "mcp"
 TAB_NAME = "Sheet1"
 
-# Utility: filter and return list of dicts
+# ✅ API Key Auth Dependency
+API_SECRET_KEY = os.getenv("API_SECRET_KEY")
+
+def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key != API_SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+# ✅ Utility to fetch filtered leads
 def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> List[dict]:
     try:
         sheet = client.open(sheet_name).worksheet(tab_name)
@@ -49,17 +56,20 @@ def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> Lis
     except Exception as e:
         raise RuntimeError(f"Failed to fetch data: {e}")
 
+# ✅ Public health check
 @app.get("/")
 def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
 
+# ✅ GET leads with filters + auth
 @app.get("/crm/leads")
 def get_leads(
     domain: Optional[str] = None,
     platform: Optional[str] = None,
     billingtype: Optional[str] = None,
     type: Optional[str] = None,
-    cartrecoverymode: Optional[str] = None
+    cartrecoverymode: Optional[str] = None,
+    _: str = Depends(verify_api_key)
 ):
     try:
         filters = {
@@ -74,14 +84,15 @@ def get_leads(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
 
-
+# ✅ CSV export with filters + auth
 @app.get("/crm/leads/export")
 def export_leads_csv(
     domain: Optional[str] = None,
     platform: Optional[str] = None,
     billingtype: Optional[str] = None,
     type: Optional[str] = None,
-    cartrecoverymode: Optional[str] = None
+    cartrecoverymode: Optional[str] = None,
+    _: str = Depends(verify_api_key)
 ):
     try:
         filters = {
@@ -93,7 +104,6 @@ def export_leads_csv(
         }
         data = get_filtered_data(SHEET_NAME, TAB_NAME, filters)
 
-        # Create CSV in memory
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=data[0].keys() if data else [])
         writer.writeheader()
@@ -107,14 +117,15 @@ def export_leads_csv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export leads: {e}")
 
-
+# ✅ Lead model for POST
 class Lead(BaseModel):
     name: str
     email: str
     phone: str
 
+# ✅ Add new lead + auth
 @app.post("/crm/leads")
-def add_lead(lead: Lead):
+def add_lead(lead: Lead, _: str = Depends(verify_api_key)):
     try:
         sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
         sheet.append_row([lead.name, lead.email, lead.phone])
