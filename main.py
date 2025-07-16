@@ -69,33 +69,13 @@ async def register():
     return JSONResponse({
         "jsonrpc": "2.0",
         "result": {
-            "server": MCP_SERVER_INFO,
             "capabilities": {
-                "tools": {
-                    "get_leads": {
-                        "description": "Get CRM leads with optional filters",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "domain": {"type": "string", "description": "Filter by domain"},
-                                "platform": {"type": "string", "description": "Filter by platform"},
-                                "limit": {"type": "integer", "description": "Maximum number of results"}
-                            }
-                        }
-                    },
-                    "add_lead": {
-                        "description": "Add a new lead to the CRM",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string", "description": "Lead name"},
-                                "email": {"type": "string", "description": "Lead email"},
-                                "phone": {"type": "string", "description": "Lead phone number"}
-                            },
-                            "required": ["name", "email", "phone"]
-                        }
-                    }
-                }
+                "tools": {}
+            },
+            "serverInfo": {
+                "name": "crm-server",
+                "version": "1.0.0",
+                "description": "CRM data server for Claude"
             }
         }
     })
@@ -110,20 +90,24 @@ async def handle_mcp_request(request: Request):
         mcp_request = MCPRequest(**body)
         
         if mcp_request.method == "initialize":
+            logger.info("✅ Initialize request received")
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": mcp_request.id,
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
-                        "tools": {},
-                        "resources": {}
+                        "tools": {}
                     },
-                    "serverInfo": MCP_SERVER_INFO
+                    "serverInfo": {
+                        "name": "crm-server",
+                        "version": "1.0.0"
+                    }
                 }
             })
         
         elif mcp_request.method == "tools/list":
+            logger.info("✅ Tools list requested")
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": mcp_request.id,
@@ -135,23 +119,25 @@ async def handle_mcp_request(request: Request):
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "domain": {"type": "string", "description": "Filter by domain"},
-                                    "platform": {"type": "string", "description": "Filter by platform"},
+                                    "domain": {"type": "string", "description": "Filter by domain (e.g., tech, finance, healthcare)"},
+                                    "platform": {"type": "string", "description": "Filter by platform (e.g., web, mobile)"},
                                     "limit": {"type": "integer", "description": "Maximum number of results", "default": 10}
-                                }
+                                },
+                                "additionalProperties": False
                             }
                         },
                         {
                             "name": "add_lead",
-                            "description": "Add a new lead to the CRM",
+                            "description": "Add a new lead to the CRM database",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "name": {"type": "string", "description": "Lead name"},
-                                    "email": {"type": "string", "description": "Lead email"},
-                                    "phone": {"type": "string", "description": "Lead phone number"}
+                                    "name": {"type": "string", "description": "Full name of the lead"},
+                                    "email": {"type": "string", "description": "Email address of the lead"},
+                                    "phone": {"type": "string", "description": "Phone number of the lead"}
                                 },
-                                "required": ["name", "email", "phone"]
+                                "required": ["name", "email", "phone"],
+                                "additionalProperties": False
                             }
                         }
                     ]
