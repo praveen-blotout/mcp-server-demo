@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -10,6 +10,14 @@ import csv
 import io
 
 app = FastAPI()
+
+# Middleware to check API key
+def verify_api_key(x_api_key: Optional[str] = Header(None)):
+    secret = os.getenv("API_SECRET_KEY")
+    if not secret:
+        raise HTTPException(status_code=500, detail="API secret not configured")
+    if x_api_key != secret:
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
 # Google Sheets setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -25,18 +33,10 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to initialize Google Sheets client: {e}")
 
-# Sheet Configs
+# Sheet config
 SHEET_NAME = "mcp"
 TAB_NAME = "Sheet1"
 
-# ✅ API Key Auth Dependency
-API_SECRET_KEY = os.getenv("API_SECRET_KEY")
-
-def verify_api_key(x_api_key: str = Header(...)):
-    if x_api_key != API_SECRET_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-
-# ✅ Utility to fetch filtered leads
 def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> List[dict]:
     try:
         sheet = client.open(sheet_name).worksheet(tab_name)
@@ -56,20 +56,17 @@ def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> Lis
     except Exception as e:
         raise RuntimeError(f"Failed to fetch data: {e}")
 
-# ✅ Public health check
-@app.get("/")
+@app.get("/", dependencies=[Depends(verify_api_key)])
 def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
 
-# ✅ GET leads with filters + auth
-@app.get("/crm/leads")
+@app.get("/crm/leads", dependencies=[Depends(verify_api_key)])
 def get_leads(
     domain: Optional[str] = None,
     platform: Optional[str] = None,
     billingtype: Optional[str] = None,
     type: Optional[str] = None,
-    cartrecoverymode: Optional[str] = None,
-    _: str = Depends(verify_api_key)
+    cartrecoverymode: Optional[str] = None
 ):
     try:
         filters = {
@@ -84,15 +81,13 @@ def get_leads(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
 
-# ✅ CSV export with filters + auth
-@app.get("/crm/leads/export")
+@app.get("/crm/leads/export", dependencies=[Depends(verify_api_key)])
 def export_leads_csv(
     domain: Optional[str] = None,
     platform: Optional[str] = None,
     billingtype: Optional[str] = None,
     type: Optional[str] = None,
-    cartrecoverymode: Optional[str] = None,
-    _: str = Depends(verify_api_key)
+    cartrecoverymode: Optional[str] = None
 ):
     try:
         filters = {
@@ -117,15 +112,13 @@ def export_leads_csv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export leads: {e}")
 
-# ✅ Lead model for POST
 class Lead(BaseModel):
     name: str
     email: str
     phone: str
 
-# ✅ Add new lead + auth
-@app.post("/crm/leads")
-def add_lead(lead: Lead, _: str = Depends(verify_api_key)):
+@app.post("/crm/leads", dependencies=[Depends(verify_api_key)])
+def add_lead(lead: Lead):
     try:
         sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
         sheet.append_row([lead.name, lead.email, lead.phone])
