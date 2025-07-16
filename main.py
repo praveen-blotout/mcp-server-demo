@@ -1,5 +1,7 @@
-from fastapi import FastAPI, HTTPException, Request, Header, Depends
+from fastapi import FastAPI, HTTPException, Request, Header, Depends, Security
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security.api_key import APIKeyHeader
+from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 from typing import List, Optional
 import os
@@ -9,20 +11,56 @@ from oauth2client.service_account import ServiceAccountCredentials
 import csv
 import io
 
-app = FastAPI()
+# Constants
+API_KEY_NAME = "x-api-key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# Middleware to check API key
-def verify_api_key(x_api_key: Optional[str] = Header(None)):
+# FastAPI app
+app = FastAPI(
+    title="MCP CRM API",
+    description="Custom CRM API for Claude connection",
+    version="1.0.0"
+)
+
+# Inject API key verification into dependencies
+def verify_api_key(x_api_key: Optional[str] = Security(api_key_header)):
     secret = os.getenv("API_SECRET_KEY")
     if not secret:
         raise HTTPException(status_code=500, detail="API secret not configured")
     if x_api_key != secret:
         raise HTTPException(status_code=403, detail="Invalid API key")
 
+# Custom OpenAPI schema with API key header security
+@app.get("/openapi.json", include_in_schema=False)
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "APIKeyHeader": {
+            "type": "apiKey",
+            "in": "header",
+            "name": API_KEY_NAME,
+        }
+    }
+    for path in openapi_schema["paths"].values():
+        for method in path.values():
+            method.setdefault("security", []).append({"APIKeyHeader": []})
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
 # Google Sheets setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 google_creds_json = os.getenv("GOOGLE_CLIENT_JSON")
-
 if not google_creds_json:
     raise RuntimeError("GOOGLE_CLIENT_JSON environment variable is not set.")
 
@@ -33,15 +71,15 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to initialize Google Sheets client: {e}")
 
-# Sheet config
+# Sheet Configs
 SHEET_NAME = "mcp"
 TAB_NAME = "Sheet1"
 
+# Filter logic
 def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> List[dict]:
     try:
         sheet = client.open(sheet_name).worksheet(tab_name)
         rows = sheet.get_all_records()
-
         filtered = []
         for row in rows:
             match = True
@@ -51,17 +89,15 @@ def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> Lis
                     break
             if match:
                 filtered.append(row)
-
         return filtered
     except Exception as e:
         raise RuntimeError(f"Failed to fetch data: {e}")
 
-# ✅ NO AUTH — allow Claude to connect and read openapi.json
-@app.get("/")
+# Routes
+@app.get("/", dependencies=[Depends(verify_api_key)])
 def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
 
-# ✅ Secured endpoints with API key
 @app.get("/crm/leads", dependencies=[Depends(verify_api_key)])
 def get_leads(
     domain: Optional[str] = None,
@@ -100,13 +136,11 @@ def export_leads_csv(
             "CartRecoveryMode": cartrecoverymode,
         }
         data = get_filtered_data(SHEET_NAME, TAB_NAME, filters)
-
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=data[0].keys() if data else [])
         writer.writeheader()
         for row in data:
             writer.writerow(row)
-
         output.seek(0)
         return StreamingResponse(output, media_type="text/csv", headers={
             "Content-Disposition": "attachment; filename=leads.csv"
