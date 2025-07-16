@@ -61,7 +61,9 @@ async def handle_mcp_request(request: Request):
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
-                        "tools": {}
+                        "tools": {
+                            "listChanged": True
+                        }
                     },
                     "serverInfo": {
                         "name": "super-crm-server",
