@@ -176,7 +176,7 @@ def get_leads_query_auth(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
 
-# ✅ Custom OpenAPI Schema with proper security handling
+# ✅ Updated Custom OpenAPI Schema - Remove global security
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -213,8 +213,8 @@ def custom_openapi():
         }
     }
 
-    # Add global security for most endpoints
-    openapi_schema["security"] = [{"APIKeyHeader": []}]
+    # ✅ REMOVE GLOBAL SECURITY - Let each endpoint define its own
+    # openapi_schema["security"] = [{"APIKeyHeader": []}]  # Comment this out
 
     # Remove auto-generated x-api-key parameters from endpoints
     for path_name, path_item in openapi_schema["paths"].items():
@@ -229,19 +229,21 @@ def custom_openapi():
                 if not method_item["parameters"]:
                     del method_item["parameters"]
 
-    # Make specific endpoints public (no auth required)
-    public_endpoints = ["/", "/test-connection"]
-    for endpoint in public_endpoints:
-        if endpoint in openapi_schema["paths"]:
-            for method in openapi_schema["paths"][endpoint]:
-                openapi_schema["paths"][endpoint][method]["security"] = []
+    # ✅ Explicitly set security for each endpoint
+    endpoint_security_map = {
+        "/": [],  # Public
+        "/test-connection": [],  # Public
+        "/health": [],  # Public
+        "/info": [],  # Public
+        "/crm/leads": [{"APIKeyHeader": []}],  # Header auth
+        "/crm/leads/export": [{"APIKeyHeader": []}],  # Header auth
+        "/crm/leads/query-auth": [{"APIKeyQuery": []}]  # Query auth
+    }
 
-    # Set query auth endpoints to use query parameter security
-    query_auth_endpoints = ["/crm/leads/query-auth"]
-    for endpoint in query_auth_endpoints:
+    for endpoint, security in endpoint_security_map.items():
         if endpoint in openapi_schema["paths"]:
             for method in openapi_schema["paths"][endpoint]:
-                openapi_schema["paths"][endpoint][method]["security"] = [{"APIKeyQuery": []}]
+                openapi_schema["paths"][endpoint][method]["security"] = security
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema
