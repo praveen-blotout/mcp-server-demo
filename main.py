@@ -62,7 +62,34 @@ async def handle_mcp_request(request: Request):
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
                         "tools": {
-                            "listChanged": True
+                            "listChanged": True,
+                            "list": [
+                                {
+                                    "name": "get_crm_leads",
+                                    "description": "Get leads from CRM with optional filters",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "domain": {"type": "string", "description": "Filter by domain"},
+                                            "platform": {"type": "string", "description": "Filter by platform"},
+                                            "limit": {"type": "integer", "description": "Max results", "default": 10}
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "add_crm_lead", 
+                                    "description": "Add new lead to CRM",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string", "description": "Lead name"},
+                                            "email": {"type": "string", "description": "Lead email"},
+                                            "phone": {"type": "string", "description": "Lead phone"}
+                                        },
+                                        "required": ["name", "email", "phone"]
+                                    }
+                                }
+                            ]
                         }
                     },
                     "serverInfo": {
