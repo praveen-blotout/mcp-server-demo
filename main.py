@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, Dict, Any
 import json
 import logging
 
@@ -18,16 +17,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Mock CRM data
+# Mock CRM data
 MOCK_LEADS = [
     {"id": 1, "name": "John Doe", "email": "john@example.com", "phone": "+1234567890", "domain": "tech", "platform": "web"},
     {"id": 2, "name": "Jane Smith", "email": "jane@example.com", "phone": "+1234567891", "domain": "finance", "platform": "mobile"},
     {"id": 3, "name": "Bob Johnson", "email": "bob@example.com", "phone": "+1234567892", "domain": "tech", "platform": "web"},
     {"id": 4, "name": "Alice Brown", "email": "alice@example.com", "phone": "+1234567893", "domain": "healthcare", "platform": "web"}
 ]
-
-# Global flag to track initialization
-initialized = False
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -36,180 +32,185 @@ async def log_requests(request: Request, call_next):
     logger.info(f"🟢 Response: {response.status_code}")
     return response
 
-@app.head("/")
-async def handle_head():
-    logger.info("✅ HEAD request - MCP discovery")
-    return Response(headers={"Content-Type": "application/json"})
-
 @app.post("/")
 async def handle_mcp_request(request: Request):
-    global initialized
     try:
         body = await request.json()
         method = body.get("method")
         request_id = body.get("id")
         params = body.get("params", {})
         
-        logger.info(f"📨 MCP Request: {method}")
-        logger.info(f"📨 Full body: {json.dumps(body, indent=2)}")
+        logger.info(f"📨 MCP Method: {method}")
         
         if method == "initialize":
-            logger.info("🚀 Handling initialize...")
-            response = {
+            logger.info("🚀 Initialize - declaring tools capability")
+            return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
-                        "tools": {
-                            "listChanged": True,
-                            "list": [
-                                {
-                                    "name": "get_crm_leads",
-                                    "description": "Get leads from CRM with optional filters",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "domain": {"type": "string", "description": "Filter by domain"},
-                                            "platform": {"type": "string", "description": "Filter by platform"},
-                                            "limit": {"type": "integer", "description": "Max results", "default": 10}
-                                        }
-                                    }
-                                },
-                                {
-                                    "name": "add_crm_lead", 
-                                    "description": "Add new lead to CRM",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "name": {"type": "string", "description": "Lead name"},
-                                            "email": {"type": "string", "description": "Lead email"},
-                                            "phone": {"type": "string", "description": "Lead phone"}
-                                        },
-                                        "required": ["name", "email", "phone"]
-                                    }
-                                }
-                            ]
-                        }
+                        "tools": {}
                     },
                     "serverInfo": {
-                        "name": "super-crm-server",
-                        "version": "3.0.0"
+                        "name": "final-crm-server",
+                        "version": "4.0.0"
                     }
                 }
-            }
-            logger.info(f"🚀 Initialize response: {json.dumps(response, indent=2)}")
-            return JSONResponse(response)
+            })
             
         elif method == "notifications/initialized":
-            logger.info("✅ Client initialized - setting server as ready")
-            initialized = True
+            logger.info("✅ Client initialized")
             return Response(status_code=200)
             
         elif method == "tools/list":
-            logger.info("🔧 Tools list requested!")
-            if not initialized:
-                logger.warning("❌ Tools list called before initialization complete")
-            
-            response = {
-                "jsonrpc": "2.0", 
+            logger.info("🔧 TOOLS LIST CALLED! Sending tools...")
+            return JSONResponse({
+                "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
                     "tools": [
                         {
                             "name": "get_crm_leads",
-                            "description": "Get leads from CRM with optional filters",
+                            "description": "Retrieve leads from the CRM system with optional filtering by domain and platform",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "domain": {"type": "string", "description": "Filter by domain"},
-                                    "platform": {"type": "string", "description": "Filter by platform"},
-                                    "limit": {"type": "integer", "description": "Max results", "default": 10}
-                                }
+                                    "domain": {
+                                        "type": "string",
+                                        "description": "Filter leads by business domain (e.g., tech, finance, healthcare)"
+                                    },
+                                    "platform": {
+                                        "type": "string",
+                                        "description": "Filter leads by platform (e.g., web, mobile)"
+                                    },
+                                    "limit": {
+                                        "type": "integer",
+                                        "description": "Maximum number of leads to return (default: 10)",
+                                        "minimum": 1,
+                                        "maximum": 100,
+                                        "default": 10
+                                    }
+                                },
+                                "additionalProperties": False
                             }
                         },
                         {
-                            "name": "add_crm_lead", 
-                            "description": "Add new lead to CRM",
+                            "name": "add_crm_lead",
+                            "description": "Add a new lead to the CRM system with name, email, and phone number",
                             "inputSchema": {
-                                "type": "object",
+                                "type": "object", 
                                 "properties": {
-                                    "name": {"type": "string", "description": "Lead name"},
-                                    "email": {"type": "string", "description": "Lead email"},
-                                    "phone": {"type": "string", "description": "Lead phone"}
+                                    "name": {
+                                        "type": "string",
+                                        "description": "Full name of the lead"
+                                    },
+                                    "email": {
+                                        "type": "string",
+                                        "description": "Email address of the lead",
+                                        "format": "email"
+                                    },
+                                    "phone": {
+                                        "type": "string",
+                                        "description": "Phone number of the lead"
+                                    }
                                 },
-                                "required": ["name", "email", "phone"]
+                                "required": ["name", "email", "phone"],
+                                "additionalProperties": False
                             }
                         }
                     ]
                 }
-            }
-            logger.info(f"🔧 Tools response: {json.dumps(response, indent=2)}")
-            return JSONResponse(response)
+            })
             
         elif method == "tools/call":
             tool_name = params.get("name")
             tool_args = params.get("arguments", {})
-            logger.info(f"🔧 Calling tool: {tool_name} with {tool_args}")
+            logger.info(f"🔧 Tool call: {tool_name} with args: {tool_args}")
             
             if tool_name == "get_crm_leads":
-                filtered = MOCK_LEADS.copy()
+                filtered_leads = MOCK_LEADS.copy()
                 
                 if "domain" in tool_args:
                     domain = tool_args["domain"].lower()
-                    filtered = [l for l in filtered if domain in l["domain"].lower()]
+                    filtered_leads = [lead for lead in filtered_leads if domain in lead["domain"].lower()]
                 
-                if "platform" in tool_args:  
+                if "platform" in tool_args:
                     platform = tool_args["platform"].lower()
-                    filtered = [l for l in filtered if platform in l["platform"].lower()]
-                    
-                limit = tool_args.get("limit", 10)
-                filtered = filtered[:limit]
+                    filtered_leads = [lead for lead in filtered_leads if platform in lead["platform"].lower()]
                 
-                result = f"Found {len(filtered)} leads:\n\n"
-                for lead in filtered:
-                    result += f"• {lead['name']} ({lead['email']}) - {lead['domain']}/{lead['platform']}\n"
+                limit = min(tool_args.get("limit", 10), 100)
+                filtered_leads = filtered_leads[:limit]
+                
+                result_text = f"Found {len(filtered_leads)} leads:\n\n"
+                for lead in filtered_leads:
+                    result_text += f"• **{lead['name']}**\n"
+                    result_text += f"  📧 {lead['email']}\n"
+                    result_text += f"  📞 {lead['phone']}\n"
+                    result_text += f"  🏢 {lead['domain']} | 📱 {lead['platform']}\n\n"
+                
+                if not filtered_leads:
+                    result_text = "No leads found matching the specified criteria."
                 
                 return JSONResponse({
                     "jsonrpc": "2.0",
-                    "id": request_id, 
+                    "id": request_id,
                     "result": {
-                        "content": [{"type": "text", "text": result}]
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": result_text
+                            }
+                        ]
                     }
                 })
-                
+            
             elif tool_name == "add_crm_lead":
                 name = tool_args.get("name")
-                email = tool_args.get("email") 
+                email = tool_args.get("email")
                 phone = tool_args.get("phone")
                 
                 if not all([name, email, phone]):
                     return JSONResponse({
                         "jsonrpc": "2.0",
                         "id": request_id,
-                        "error": {"code": -32602, "message": "Missing required fields"}
+                        "error": {
+                            "code": -32602,
+                            "message": "Missing required parameters. Name, email, and phone are all required."
+                        }
                     })
                 
                 new_lead = {
                     "id": len(MOCK_LEADS) + 1,
-                    "name": name, "email": email, "phone": phone,
-                    "domain": "unknown", "platform": "unknown"
+                    "name": name,
+                    "email": email,
+                    "phone": phone,
+                    "domain": "unknown",
+                    "platform": "unknown"
                 }
                 MOCK_LEADS.append(new_lead)
                 
                 return JSONResponse({
-                    "jsonrpc": "2.0", 
+                    "jsonrpc": "2.0",
                     "id": request_id,
                     "result": {
-                        "content": [{"type": "text", "text": f"✅ Added: {name} ({email})"}]
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"✅ **Lead Added Successfully!**\n\n📝 **Name:** {name}\n📧 **Email:** {email}\n📞 **Phone:** {phone}\n\nThe lead has been added to the CRM system and is now available for retrieval."
+                            }
+                        ]
                     }
                 })
             
             else:
                 return JSONResponse({
                     "jsonrpc": "2.0",
-                    "id": request_id, 
-                    "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"Unknown tool: {tool_name}. Available tools: get_crm_leads, add_crm_lead"
+                    }
                 })
         
         else:
@@ -217,24 +218,52 @@ async def handle_mcp_request(request: Request):
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {"code": -32601, "message": f"Unknown method: {method}"}
+                "error": {
+                    "code": -32601,
+                    "message": f"Method '{method}' not found"
+                }
             })
             
     except Exception as e:
-        logger.error(f"❌ Error: {e}")
+        logger.error(f"❌ Error processing request: {e}")
         return JSONResponse({
-            "jsonrpc": "2.0", 
+            "jsonrpc": "2.0",
             "id": request_id if 'request_id' in locals() else None,
-            "error": {"code": -32603, "message": str(e)}
-        })
+            "error": {
+                "code": -32603,
+                "message": f"Internal server error: {str(e)}"
+            }
+        }, status_code=500)
 
 @app.get("/")
 async def root():
-    return {"message": "Super CRM MCP Server v3.0", "status": "ready", "initialized": initialized}
+    return {
+        "message": "Final CRM MCP Server v4.0", 
+        "status": "ready",
+        "tools": ["get_crm_leads", "add_crm_lead"],
+        "leads_count": len(MOCK_LEADS)
+    }
 
-@app.get("/health") 
+@app.get("/health")
 async def health():
-    return {"status": "healthy", "leads": len(MOCK_LEADS), "initialized": initialized}
+    return {"status": "healthy", "version": "4.0.0"}
+
+# Force tools/list call by providing a specific endpoint
+@app.post("/tools/list")
+async def tools_list_endpoint():
+    logger.info("🔧 Direct tools/list endpoint called")
+    return JSONResponse({
+        "tools": [
+            {
+                "name": "get_crm_leads",
+                "description": "Get CRM leads with filters"
+            },
+            {
+                "name": "add_crm_lead", 
+                "description": "Add new lead to CRM"
+            }
+        ]
+    })
 
 if __name__ == "__main__":
     import uvicorn
