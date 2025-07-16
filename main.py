@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import json
 import logging
 import os
@@ -42,13 +42,13 @@ MOCK_LEADS = [
 # ✅ MCP Request/Response Models
 class MCPRequest(BaseModel):
     jsonrpc: str = "2.0"
-    id: Optional[str] = None
+    id: Optional[Any] = None  # Can be string, int, or None
     method: str
     params: Optional[Dict[str, Any]] = None
 
 class MCPResponse(BaseModel):
     jsonrpc: str = "2.0"
-    id: Optional[str] = None
+    id: Optional[Any] = None  # Can be string, int, or None
     result: Optional[Dict[str, Any]] = None
     error: Optional[Dict[str, Any]] = None
 
@@ -261,7 +261,7 @@ async def handle_mcp_request(request: Request):
                 "code": -32603,
                 "message": f"Internal error: {str(e)}"
             }
-        })
+        }, status_code=500)
 
 # ✅ Regular HTTP endpoints for testing
 @app.get("/")
