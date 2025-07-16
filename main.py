@@ -50,7 +50,9 @@ async def handle_mcp_request(request: Request):
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
-                        "tools": {}
+                        "tools": {},
+                        "resources": False,
+                        "prompts": False
                     },
                     "serverInfo": {
                         "name": "final-crm-server",
@@ -61,7 +63,27 @@ async def handle_mcp_request(request: Request):
             
         elif method == "notifications/initialized":
             logger.info("✅ Client initialized")
-            return Response(status_code=200)
+            # Some MCP clients need a hint about available tools
+            logger.info("🎯 Sending tools hint in initialized response")
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "method": "notifications/tools/changed",
+                "params": {}
+            })
+            
+        elif method == "methods/list":
+            logger.info("📋 Methods list requested")
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "methods": [
+                        "initialize",
+                        "tools/list",
+                        "tools/call"
+                    ]
+                }
+            })
             
         elif method == "tools/list":
             logger.info("🔧 TOOLS LIST CALLED! Sending tools...")
@@ -113,6 +135,16 @@ async def handle_mcp_request(request: Request):
                                     "phone": {
                                         "type": "string",
                                         "description": "Phone number of the lead"
+                                    },
+                                    "domain": {
+                                        "type": "string",
+                                        "description": "Business domain (e.g., tech, finance, healthcare)",
+                                        "default": "unknown"
+                                    },
+                                    "platform": {
+                                        "type": "string", 
+                                        "description": "Platform (e.g., web, mobile)",
+                                        "default": "unknown"
                                     }
                                 },
                                 "required": ["name", "email", "phone"],
@@ -169,6 +201,8 @@ async def handle_mcp_request(request: Request):
                 name = tool_args.get("name")
                 email = tool_args.get("email")
                 phone = tool_args.get("phone")
+                domain = tool_args.get("domain", "unknown")
+                platform = tool_args.get("platform", "unknown")
                 
                 if not all([name, email, phone]):
                     return JSONResponse({
@@ -185,8 +219,8 @@ async def handle_mcp_request(request: Request):
                     "name": name,
                     "email": email,
                     "phone": phone,
-                    "domain": "unknown",
-                    "platform": "unknown"
+                    "domain": domain,
+                    "platform": platform
                 }
                 MOCK_LEADS.append(new_lead)
                 
@@ -197,7 +231,7 @@ async def handle_mcp_request(request: Request):
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"✅ **Lead Added Successfully!**\n\n📝 **Name:** {name}\n📧 **Email:** {email}\n📞 **Phone:** {phone}\n\nThe lead has been added to the CRM system and is now available for retrieval."
+                                "text": f"✅ **Lead Added Successfully!**\n\n📝 **Name:** {name}\n📧 **Email:** {email}\n📞 **Phone:** {phone}\n🏢 **Domain:** {domain}\n📱 **Platform:** {platform}\n\nThe lead has been added to the CRM system with ID #{new_lead['id']}."
                             }
                         ]
                     }
@@ -248,22 +282,23 @@ async def root():
 async def health():
     return {"status": "healthy", "version": "4.0.0"}
 
-# Force tools/list call by providing a specific endpoint
-@app.post("/tools/list")
-async def tools_list_endpoint():
-    logger.info("🔧 Direct tools/list endpoint called")
-    return JSONResponse({
+# Debug endpoint to manually check tools
+@app.get("/debug/tools")
+async def debug_tools():
+    return {
         "tools": [
             {
                 "name": "get_crm_leads",
-                "description": "Get CRM leads with filters"
+                "description": "Get CRM leads with filters",
+                "params": ["domain", "platform", "limit"]
             },
             {
                 "name": "add_crm_lead", 
-                "description": "Add new lead to CRM"
+                "description": "Add new lead to CRM",
+                "params": ["name", "email", "phone", "domain", "platform"]
             }
         ]
-    })
+    }
 
 if __name__ == "__main__":
     import uvicorn
