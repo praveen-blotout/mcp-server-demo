@@ -12,9 +12,7 @@ import io
 
 app = FastAPI()
 
-# -------------------------------
-# 🔒 API Key Middleware
-# -------------------------------
+# API Key Middleware
 def verify_api_key(x_api_key: Optional[str] = Header(None)):
     secret = os.getenv("API_SECRET_KEY")
     if not secret:
@@ -22,9 +20,7 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
     if x_api_key != secret:
         raise HTTPException(status_code=403, detail="Invalid API key")
 
-# -------------------------------
-# 📄 Google Sheets Setup
-# -------------------------------
+# Google Sheets setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 google_creds_json = os.getenv("GOOGLE_CLIENT_JSON")
 
@@ -38,15 +34,10 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to initialize Google Sheets client: {e}")
 
-# -------------------------------
-# 📊 Sheet Configs
-# -------------------------------
 SHEET_NAME = "mcp"
 TAB_NAME = "Sheet1"
 
-# -------------------------------
-# 📦 Utility: Filter Logic
-# -------------------------------
+# Utility
 def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> List[dict]:
     try:
         sheet = client.open(sheet_name).worksheet(tab_name)
@@ -65,9 +56,13 @@ def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> Lis
     except Exception as e:
         raise RuntimeError(f"Failed to fetch data: {e}")
 
-# -------------------------------
-# ✅ Endpoints
-# -------------------------------
+# Models
+class Lead(BaseModel):
+    name: str
+    email: str
+    phone: str
+
+# Routes
 @app.get("/", dependencies=[Depends(verify_api_key)])
 def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
@@ -92,6 +87,15 @@ def get_leads(
         return JSONResponse(content=data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch leads: {e}")
+
+@app.post("/crm/leads", dependencies=[Depends(verify_api_key)])
+def add_lead(lead: Lead):
+    try:
+        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+        sheet.append_row([lead.name, lead.email, lead.phone])
+        return {"message": "Lead added successfully ✅"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add lead: {e}")
 
 @app.get("/crm/leads/export", dependencies=[Depends(verify_api_key)])
 def export_leads_csv(
@@ -124,38 +128,25 @@ def export_leads_csv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export leads: {e}")
 
-class Lead(BaseModel):
-    name: str
-    email: str
-    phone: str
-
-@app.post("/crm/leads", dependencies=[Depends(verify_api_key)])
-def add_lead(lead: Lead):
-    try:
-        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
-        sheet.append_row([lead.name, lead.email, lead.phone])
-        return {"message": "Lead added successfully ✅"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to add lead: {e}")
-
-# -------------------------------
-# 🔧 Custom OpenAPI Schema
-# -------------------------------
+# 🔧 Custom OpenAPI to match Claude’s expectation
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
+
     openapi_schema = get_openapi(
         title="MCP CRM API",
         version="1.0.0",
         description="Custom CRM API for Claude connection",
         routes=app.routes,
     )
+
     openapi_schema["servers"] = [
         {
             "url": "https://airy-renewal-production.up.railway.app",
             "description": "Production server"
         }
     ]
+
     openapi_schema["components"]["securitySchemes"] = {
         "APIKeyHeader": {
             "type": "apiKey",
@@ -163,6 +154,7 @@ def custom_openapi():
             "in": "header"
         }
     }
+
     openapi_schema["security"] = [{"APIKeyHeader": []}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
