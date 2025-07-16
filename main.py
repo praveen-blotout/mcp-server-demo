@@ -56,10 +56,12 @@ def get_filtered_data(sheet_name: str, tab_name: str, filters: dict = {}) -> Lis
     except Exception as e:
         raise RuntimeError(f"Failed to fetch data: {e}")
 
-@app.get("/", dependencies=[Depends(verify_api_key)])
+# ✅ NO AUTH — allow Claude to connect and read openapi.json
+@app.get("/")
 def read_root():
     return {"message": "✅ Google Sheets MCP Server is running 🚀"}
 
+# ✅ Secured endpoints with API key
 @app.get("/crm/leads", dependencies=[Depends(verify_api_key)])
 def get_leads(
     domain: Optional[str] = None,
