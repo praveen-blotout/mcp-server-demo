@@ -75,20 +75,25 @@ async def handle_mcp_request(request: Request):
         
         # Initialize handshake
         if method == "initialize":
-            return JSONResponse({
+            logger.info("🚀 Sending initialize response with tools capability")
+            response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
-                        "tools": {}
+                        "tools": {
+                            "listChanged": True
+                        }
                     },
                     "serverInfo": {
                         "name": "fresh-crm-server",
                         "version": "2.0.0"
                     }
                 }
-            })
+            }
+            logger.info(f"🚀 Initialize response: {json.dumps(response, indent=2)}")
+            return JSONResponse(response)
         
         # List available tools
         elif method == "tools/list":
