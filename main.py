@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any, Union
 import json
 import logging
 import os
+import uuid
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,17 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ MCP Server Info
-MCP_SERVER_INFO = {
-    "name": "crm-server",
-    "version": "1.0.0",
-    "description": "CRM data server for Claude",
-    "capabilities": {
-        "tools": {},
-        "resources": {}
-    }
-}
-
 # ✅ Mock CRM data
 MOCK_LEADS = [
     {"id": 1, "name": "John Doe", "email": "john@example.com", "phone": "+1234567890", "domain": "tech", "platform": "web"},
@@ -39,117 +29,141 @@ MOCK_LEADS = [
     {"id": 4, "name": "Alice Brown", "email": "alice@example.com", "phone": "+1234567893", "domain": "healthcare", "platform": "web"}
 ]
 
-# ✅ MCP Request/Response Models
-class MCPRequest(BaseModel):
-    jsonrpc: str = "2.0"
-    id: Optional[Any] = None  # Can be string, int, or None
-    method: str
-    params: Optional[Dict[str, Any]] = None
+# ✅ Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"🔵 {request.method} {request.url.path}")
+    if request.method == "POST":
+        body = await request.body()
+        if body:
+            try:
+                json_body = json.loads(body)
+                logger.info(f"🔵 Request body: {json_body}")
+            except:
+                logger.info(f"🔵 Request body (raw): {body[:200]}...")
+    
+    # Restore body for processing
+    async def receive():
+        return {"type": "http.request", "body": body if 'body' in locals() else b""}
+    
+    request._receive = receive
+    response = await call_next(request)
+    logger.info(f"🟢 Response: {response.status_code}")
+    return response
 
-class MCPResponse(BaseModel):
-    jsonrpc: str = "2.0"
-    id: Optional[Any] = None  # Can be string, int, or None
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[Dict[str, Any]] = None
-
-# ✅ Handle HEAD requests (MCP discovery)
+# ✅ Handle HEAD requests for MCP discovery
 @app.head("/")
 async def handle_head():
+    logger.info("✅ HEAD request for MCP discovery")
     return Response(
         headers={
-            "X-MCP-Server": "crm-server/1.0.0",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-MCP-Server": "fresh-crm-server/2.0.0"
         }
     )
-
-# ✅ Handle MCP registration
-@app.post("/register")
-async def register():
-    logger.info("✅ MCP Registration request")
-    return JSONResponse({
-        "jsonrpc": "2.0",
-        "result": {
-            "capabilities": {
-                "tools": {}
-            },
-            "serverInfo": {
-                "name": "crm-server",
-                "version": "1.0.0",
-                "description": "CRM data server for Claude"
-            }
-        }
-    })
 
 # ✅ Main MCP endpoint
 @app.post("/")
 async def handle_mcp_request(request: Request):
     try:
         body = await request.json()
-        logger.info(f"✅ MCP Request: {body}")
+        method = body.get("method")
+        request_id = body.get("id")
+        params = body.get("params", {})
         
-        mcp_request = MCPRequest(**body)
+        logger.info(f"✅ MCP Method: {method}")
         
-        if mcp_request.method == "initialize":
-            logger.info("✅ Initialize request received")
+        # Initialize handshake
+        if method == "initialize":
             return JSONResponse({
                 "jsonrpc": "2.0",
-                "id": mcp_request.id,
+                "id": request_id,
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
                         "tools": {}
                     },
                     "serverInfo": {
-                        "name": "crm-server",
-                        "version": "1.0.0"
+                        "name": "fresh-crm-server",
+                        "version": "2.0.0"
                     }
                 }
             })
         
-        elif mcp_request.method == "tools/list":
-            logger.info("✅ Tools list requested")
-            return JSONResponse({
+        # List available tools
+        elif method == "tools/list":
+            logger.info("🔧 Sending tools list...")
+            tools_response = {
                 "jsonrpc": "2.0",
-                "id": mcp_request.id,
+                "id": request_id,
                 "result": {
                     "tools": [
                         {
-                            "name": "get_leads",
-                            "description": "Get CRM leads with optional filters",
+                            "name": "get_crm_leads",
+                            "description": "Retrieve leads from the CRM system with optional filtering",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "domain": {"type": "string", "description": "Filter by domain (e.g., tech, finance, healthcare)"},
-                                    "platform": {"type": "string", "description": "Filter by platform (e.g., web, mobile)"},
-                                    "limit": {"type": "integer", "description": "Maximum number of results", "default": 10}
-                                },
-                                "additionalProperties": False
+                                    "domain": {
+                                        "type": "string",
+                                        "description": "Filter leads by business domain (tech, finance, healthcare, etc.)"
+                                    },
+                                    "platform": {
+                                        "type": "string", 
+                                        "description": "Filter leads by platform (web, mobile, etc.)"
+                                    },
+                                    "limit": {
+                                        "type": "integer",
+                                        "description": "Maximum number of leads to return",
+                                        "minimum": 1,
+                                        "maximum": 100,
+                                        "default": 10
+                                    }
+                                }
                             }
                         },
                         {
-                            "name": "add_lead",
-                            "description": "Add a new lead to the CRM database",
+                            "name": "add_crm_lead",
+                            "description": "Add a new lead to the CRM system",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "name": {"type": "string", "description": "Full name of the lead"},
-                                    "email": {"type": "string", "description": "Email address of the lead"},
-                                    "phone": {"type": "string", "description": "Phone number of the lead"}
+                                    "name": {
+                                        "type": "string",
+                                        "description": "Full name of the potential customer"
+                                    },
+                                    "email": {
+                                        "type": "string",
+                                        "description": "Email address of the lead"
+                                    },
+                                    "phone": {
+                                        "type": "string",
+                                        "description": "Phone number of the lead"
+                                    },
+                                    "domain": {
+                                        "type": "string",
+                                        "description": "Business domain/industry of the lead",
+                                        "default": "unknown"
+                                    }
                                 },
-                                "required": ["name", "email", "phone"],
-                                "additionalProperties": False
+                                "required": ["name", "email", "phone"]
                             }
                         }
                     ]
                 }
-            })
+            }
+            logger.info(f"🔧 Tools response: {json.dumps(tools_response, indent=2)}")
+            return JSONResponse(tools_response)
         
-        elif mcp_request.method == "tools/call":
-            tool_name = mcp_request.params.get("name")
-            tool_args = mcp_request.params.get("arguments", {})
+        # Execute tool calls
+        elif method == "tools/call":
+            tool_name = params.get("name")
+            tool_args = params.get("arguments", {})
             
-            if tool_name == "get_leads":
-                # Filter leads based on arguments
+            logger.info(f"🔧 Tool call: {tool_name} with args: {tool_args}")
+            
+            if tool_name == "get_crm_leads":
+                # Filter leads
                 filtered_leads = MOCK_LEADS.copy()
                 
                 if "domain" in tool_args:
@@ -160,37 +174,45 @@ async def handle_mcp_request(request: Request):
                     platform = tool_args["platform"].lower()
                     filtered_leads = [lead for lead in filtered_leads if platform in lead["platform"].lower()]
                 
-                limit = tool_args.get("limit", 10)
+                limit = min(tool_args.get("limit", 10), 100)
                 filtered_leads = filtered_leads[:limit]
+                
+                result_text = f"Found {len(filtered_leads)} leads:\n\n"
+                for lead in filtered_leads:
+                    result_text += f"• **{lead['name']}**\n"
+                    result_text += f"  Email: {lead['email']}\n"
+                    result_text += f"  Phone: {lead['phone']}\n"
+                    result_text += f"  Domain: {lead['domain']} | Platform: {lead['platform']}\n\n"
+                
+                if not filtered_leads:
+                    result_text = "No leads found matching the specified criteria."
                 
                 return JSONResponse({
                     "jsonrpc": "2.0",
-                    "id": mcp_request.id,
+                    "id": request_id,
                     "result": {
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"Found {len(filtered_leads)} leads:\n\n" + 
-                                       "\n".join([f"• {lead['name']} ({lead['email']}) - {lead['domain']}/{lead['platform']}" 
-                                                for lead in filtered_leads])
+                                "text": result_text
                             }
-                        ],
-                        "isError": False
+                        ]
                     }
                 })
             
-            elif tool_name == "add_lead":
+            elif tool_name == "add_crm_lead":
                 name = tool_args.get("name")
                 email = tool_args.get("email")
                 phone = tool_args.get("phone")
+                domain = tool_args.get("domain", "unknown")
                 
                 if not all([name, email, phone]):
                     return JSONResponse({
                         "jsonrpc": "2.0",
-                        "id": mcp_request.id,
+                        "id": request_id,
                         "error": {
                             "code": -32602,
-                            "message": "Missing required fields: name, email, phone"
+                            "message": "Missing required fields: name, email, and phone are required"
                         }
                     })
                 
@@ -199,42 +221,47 @@ async def handle_mcp_request(request: Request):
                     "name": name,
                     "email": email,
                     "phone": phone,
-                    "domain": "unknown",
+                    "domain": domain,
                     "platform": "unknown"
                 }
                 MOCK_LEADS.append(new_lead)
                 
                 return JSONResponse({
                     "jsonrpc": "2.0",
-                    "id": mcp_request.id,
+                    "id": request_id,
                     "result": {
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"✅ Successfully added lead: {name} ({email})"
+                                "text": f"✅ **Lead Added Successfully!**\n\n**Name:** {name}\n**Email:** {email}\n**Phone:** {phone}\n**Domain:** {domain}\n\nThe lead has been added to the CRM system."
                             }
-                        ],
-                        "isError": False
+                        ]
                     }
                 })
             
             else:
                 return JSONResponse({
                     "jsonrpc": "2.0",
-                    "id": mcp_request.id,
+                    "id": request_id,
                     "error": {
                         "code": -32601,
                         "message": f"Unknown tool: {tool_name}"
                     }
                 })
         
+        # Handle notifications (no response needed)
+        elif method == "notifications/initialized":
+            logger.info("✅ Client initialized notification received")
+            return Response(status_code=200)
+        
         else:
+            logger.warning(f"❓ Unknown method: {method}")
             return JSONResponse({
                 "jsonrpc": "2.0",
-                "id": mcp_request.id,
+                "id": request_id,
                 "error": {
                     "code": -32601,
-                    "message": f"Unknown method: {mcp_request.method}"
+                    "message": f"Method not found: {method}"
                 }
             })
     
@@ -242,21 +269,48 @@ async def handle_mcp_request(request: Request):
         logger.error(f"❌ Error processing MCP request: {e}")
         return JSONResponse({
             "jsonrpc": "2.0",
-            "id": getattr(mcp_request, 'id', None) if 'mcp_request' in locals() else None,
+            "id": request_id if 'request_id' in locals() else None,
             "error": {
                 "code": -32603,
                 "message": f"Internal error: {str(e)}"
             }
         }, status_code=500)
 
-# ✅ Regular HTTP endpoints for testing
+# ✅ Regular endpoints for testing
 @app.get("/")
 async def root():
-    return {"message": "MCP CRM Server", "status": "ready"}
+    return {
+        "message": "Fresh MCP CRM Server v2.0", 
+        "status": "ready",
+        "server": "fresh-crm-server",
+        "version": "2.0.0",
+        "protocol": "MCP 2025-06-18"
+    }
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "type": "mcp-server"}
+    return {
+        "status": "healthy", 
+        "type": "mcp-server",
+        "tools_available": 2,
+        "leads_count": len(MOCK_LEADS)
+    }
+
+# ✅ Debug endpoint
+@app.get("/debug")
+async def debug():
+    return {
+        "server_info": {
+            "name": "fresh-crm-server",
+            "version": "2.0.0",
+            "protocol": "MCP 2025-06-18"
+        },
+        "available_tools": [
+            "get_crm_leads",
+            "add_crm_lead"
+        ],
+        "sample_data": MOCK_LEADS[:2]
+    }
 
 if __name__ == "__main__":
     import uvicorn
