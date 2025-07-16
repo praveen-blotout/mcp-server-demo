@@ -128,7 +128,7 @@ def export_leads_csv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export leads: {e}")
 
-# ✅ Custom OpenAPI Schema to include servers and security
+# ✅ Custom OpenAPI Schema with parameter filtering
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -140,6 +140,7 @@ def custom_openapi():
         routes=app.routes,
     )
 
+    # Add servers
     openapi_schema["servers"] = [
         {
             "url": "https://airy-renewal-production.up.railway.app",
@@ -147,6 +148,10 @@ def custom_openapi():
         }
     ]
 
+    # Add security schemes
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+    
     openapi_schema["components"]["securitySchemes"] = {
         "APIKeyHeader": {
             "type": "apiKey",
@@ -155,8 +160,24 @@ def custom_openapi():
         }
     }
 
+    # Add global security
     openapi_schema["security"] = [{"APIKeyHeader": []}]
+
+    # ✅ CRITICAL FIX: Remove x-api-key parameters from all endpoints
+    for path in openapi_schema["paths"]:
+        for method in openapi_schema["paths"][path]:
+            if "parameters" in openapi_schema["paths"][path][method]:
+                # Filter out x-api-key parameters
+                openapi_schema["paths"][path][method]["parameters"] = [
+                    param for param in openapi_schema["paths"][path][method]["parameters"]
+                    if not (param.get("name") == "x-api-key" and param.get("in") == "header")
+                ]
+                # Remove empty parameters list
+                if not openapi_schema["paths"][path][method]["parameters"]:
+                    del openapi_schema["paths"][path][method]["parameters"]
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
+# Set the custom OpenAPI function
 app.openapi = custom_openapi
