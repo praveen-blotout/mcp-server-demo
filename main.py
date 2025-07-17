@@ -86,8 +86,11 @@ async def handle_mcp_request(request: Request):
         if method == "initialize":
             logger.info("🚀 Initialize - declaring tools capability")
             
-            # Clear this session's tools sent status
-            tools_sent.discard(session_id)
+            # Clear all sessions to force fresh start
+            tools_sent.clear()
+            
+            # Always treat as new session
+            session_id = f"session_{request_id}_{datetime.now().timestamp()}"
             
             return JSONResponse({
                 "jsonrpc": "2.0",
@@ -95,11 +98,15 @@ async def handle_mcp_request(request: Request):
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
-                        "tools": {}
+                        "tools": {},
+                        "experimental": {
+                            "persistentConnection": False,  # Tell Claude not to persist
+                            "autoReconnect": True
+                        }
                     },
                     "serverInfo": {
                         "name": "crm-mcp-server",
-                        "version": "8.0.0"
+                        "version": "8.1.0"
                     }
                 }
             })
@@ -408,6 +415,58 @@ async def handle_mcp_request(request: Request):
             }
         }, status_code=500)
 
+@app.post("/api/leads")
+async def api_get_leads(request: Request):
+    """Simple API endpoint when MCP fails"""
+    try:
+        body = await request.json()
+        
+        # Extract filters
+        filters = {}
+        if body.get("platform"):
+            filters["Platform"] = body["platform"]
+        if body.get("billingtype"):
+            filters["BillingType"] = body["billingtype"]
+        if body.get("type"):
+            filters["Type"] = body["type"]
+        if body.get("cartrecoverymode"):
+            filters["CartRecoveryMode"] = body["cartrecoverymode"]
+        if body.get("providers"):
+            filters["Providers"] = body["providers"]
+        
+        leads = get_filtered_data(filters)
+        limit = body.get("limit", 10)
+        leads = leads[:limit]
+        
+        return {
+            "success": True,
+            "count": len(leads),
+            "filters": filters,
+            "leads": leads
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/help")
+async def api_help():
+    """API usage instructions"""
+    return {
+        "endpoints": {
+            "get_leads": "POST /api/leads - Get filtered leads",
+            "add_lead": "POST /api/lead - Add new lead"
+        },
+        "filters": {
+            "platform": ["SHOPIFY", "WOOCOMMERCE", "BIGCOMMERCE", "EDGETAG", "SALESFORCE"],
+            "billingtype": ["USAGE", "CONTRACT", "FREE", "SHOPIFY"],
+            "type": ["1P", "2P"],
+            "cartrecoverymode": ["N/A", "disabled", "enabled", "preview", "ab-test"]
+        },
+        "example": {
+            "platform": "BIGCOMMERCE",
+            "limit": 10
+        }
+    }
+
 @app.get("/")
 async def root():
     return {
@@ -431,6 +490,26 @@ async def ignore_wellknown(path: str):
 @app.post("/register")
 async def ignore_register():
     return JSONResponse({"error": "Not implemented"}, status_code=404)
+
+@app.get("/refresh")
+async def refresh_connection():
+    """Endpoint to refresh the connection"""
+    tools_sent.clear()
+    return {
+        "status": "refreshed",
+        "message": "Connection refreshed. Tools should be available again.",
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/status")
+async def status():
+    """Check server status"""
+    return {
+        "status": "healthy",
+        "google_sheets_connected": USE_GOOGLE_SHEETS,
+        "active_sessions": len(tools_sent),
+        "timestamp": datetime.now().isoformat()
+    }
 
 if __name__ == "__main__":
     import uvicorn
