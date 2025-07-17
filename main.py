@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi import FastAPI, Request, Query
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import logging
@@ -7,8 +7,6 @@ import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from typing import Dict, Any, List, Optional
-import csv
-import io
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
@@ -41,607 +39,243 @@ if google_creds_json:
         logger.info("✅ Google Sheets connected successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Google Sheets client: {e}")
-        USE_GOOGLE_SHEETS = False
-
-# Filter options
-PLATFORM_OPTIONS = ["WOOCOMMERCE", "SHOPIFY", "EDGETAG", "BIGCOMMERCE", "SALESFORCE"]
-BILLING_TYPE_OPTIONS = ["USAGE", "SHOPIFY", "CONTRACT", "FREE"]
-TYPE_OPTIONS = ["1P", "2P"]
-CART_RECOVERY_MODE_OPTIONS = ["N/A", "disabled", "enabled", "preview", "ab-test"]
-PROVIDER_OPTIONS = [
-    "attentive", "bing", "blotoutWallet", "customersAI", "facebook", 
-    "gcpPubSub", "googleAdsClicks", "googleAnalytics4", "klaviyo", 
-    "outOfTheBlue", "pinterest", "reddit", "shopGPT", "shopify", 
-    "snapchat", "tiktok", "yotpo"
-]
 
 def get_filtered_data(filters: dict = {}) -> List[dict]:
-    """Filter data using case-insensitive partial matching"""
-    if USE_GOOGLE_SHEETS and client:
-        try:
-            sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
-            rows = sheet.get_all_records()
-            logger.info(f"✅ Fetched {len(rows)} records from Google Sheets")
-        except Exception as e:
-            logger.error(f"Failed to fetch from Google Sheets: {e}")
-            return []
-    else:
-        logger.warning("⚠️ Google Sheets not connected. Please set GOOGLE_CLIENT_JSON environment variable.")
+    """Get filtered data from Google Sheets"""
+    if not USE_GOOGLE_SHEETS or not client:
         return []
     
-    filtered = []
-    for row in rows:
-        match = True
-        for key, value in filters.items():
-            if value:
-                # Special handling for Providers field (partial match)
-                if key == "Providers" and value:
-                    providers_field = str(row.get(key, "")).lower()
-                    if value.lower() not in providers_field:
+    try:
+        sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+        rows = sheet.get_all_records()
+        
+        filtered = []
+        for row in rows:
+            match = True
+            for key, value in filters.items():
+                if value:
+                    # Case-insensitive partial matching
+                    if value.lower() not in str(row.get(key, "")).lower():
                         match = False
                         break
-                # For other fields, use case-insensitive partial matching
-                elif value.lower() not in str(row.get(key, "")).lower():
-                    match = False
-                    break
-        if match:
-            filtered.append(row)
-    
-    return filtered
-
-def format_lead_response(leads: List[dict]) -> str:
-    """Format leads for display"""
-    if not leads:
-        return "No leads found matching the specified criteria. Please ensure the Google Sheets connection is configured and contains data."
-    
-    result = f"Found {len(leads)} leads:\n\n"
-    
-    for i, lead in enumerate(leads, 1):
-        result += f"**{i}. {lead.get('TeamName', 'N/A')} (Tag: {lead.get('TagId', 'N/A')})**\n"
-        result += f"   - Domain: {lead.get('Domain', 'N/A')}\n"
-        result += f"   - Platform: {lead.get('Platform', 'N/A')}\n"
-        result += f"   - Status: {lead.get('Status', 'N/A')}\n"
-        result += f"   - Billing Type: {lead.get('BillingType', 'N/A')}\n"
-        result += f"   - Type: {lead.get('Type', 'N/A')}\n"
-        result += f"   - Cart Recovery: {lead.get('CartRecoveryMode', 'N/A')}\n"
-        result += f"   - Revenue: {lead.get('Revenue', 'N/A')}\n"
-        result += f"   - Potential Revenue: {lead.get('PotentialRevenue', 'N/A')}\n"
-        result += f"   - Created: {lead.get('CreatedAt', 'N/A')}\n"
-        if lead.get('Providers'):
-            result += f"   - Providers: {lead.get('Providers', 'N/A')}\n"
-        result += "\n"
-    
-    return result
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    logger.info(f"🔵 {request.method} {request.url.path}")
-    response = await call_next(request)
-    logger.info(f"🟢 Response: {response.status_code}")
-    return response
-
-@app.post("/simple")
-async def simple_endpoint(request: Request):
-    """Simple endpoint for when MCP tools disconnect"""
-    try:
-        body = await request.json()
-        action = body.get("action", "").lower()
+            if match:
+                filtered.append(row)
         
-        logger.info(f"Simple endpoint called with action: {action}")
-        
-        if "help" in action or not action:
-            return JSONResponse({
-                "message": "CRM Commands: 'get leads', 'get shopify leads', 'get contract billing leads', 'add lead [name] [domain] [platform]'",
-                "status": "ready"
-            })
-        
-        elif "get" in action and "lead" in action:
-            filters = {}
-            
-            # Parse filters from action
-            if "shopify" in action:
-                filters["Platform"] = "SHOPIFY"
-            if "woocommerce" in action:
-                filters["Platform"] = "WOOCOMMERCE"
-            if "contract" in action:
-                filters["BillingType"] = "CONTRACT"
-            if "usage" in action:
-                filters["BillingType"] = "USAGE"
-            if "1p" in action:
-                filters["Type"] = "1P"
-            if "2p" in action:
-                filters["Type"] = "2P"
-            
-            leads = get_filtered_data(filters)[:10]
-            
-            if not leads:
-                return JSONResponse({
-                    "message": "No leads found. Make sure Google Sheets is connected.",
-                    "connected": USE_GOOGLE_SHEETS
-                })
-            
-            response = f"Found {len(leads)} leads:\n"
-            for lead in leads:
-                response += f"- {lead.get('TeamName')} ({lead.get('Domain')}) - {lead.get('Platform')}\n"
-            
-            return JSONResponse({"message": response})
-        
-        else:
-            return JSONResponse({
-                "message": "Try: 'get leads' or 'get shopify leads'",
-                "status": "ready"
-            })
-            
+        return filtered
     except Exception as e:
-        logger.error(f"Simple endpoint error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        logger.error(f"Error fetching data: {e}")
+        return []
 
 @app.post("/")
-async def handle_mcp_request(request: Request):
-    """MCP handler for Claude"""
+async def simple_connector(request: Request):
+    """Simple connector endpoint that Claude can easily use"""
     try:
         body = await request.json()
-        method = body.get("method")
-        request_id = body.get("id")
-        params = body.get("params", {})
+        query = body.get("query", body.get("message", body.get("prompt", "")))
         
-        logger.info(f"📨 MCP Method: {method}")
+        logger.info(f"Query received: {query}")
         
-        if method == "initialize":
-            logger.info("🚀 Initialize - declaring tools capability")
+        # Parse the query to understand intent
+        query_lower = query.lower()
+        
+        # Check for help or tool listing
+        if any(word in query_lower for word in ["help", "tools", "commands", "what can"]):
             return JSONResponse({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "serverInfo": {
-                        "name": "crm-mcp-server",
-                        "version": "7.0.0"
-                    }
-                }
+                "response": """I can help you with CRM operations:
+
+**Available Commands:**
+• Get leads: "show leads", "get all leads", "list leads"
+• Filter by platform: "get SHOPIFY leads", "show WOOCOMMERCE leads"
+• Filter by billing: "get CONTRACT leads", "show USAGE billing leads"
+• Filter by type: "get 1P leads", "show 2P leads"
+• Filter by cart recovery: "get enabled cart recovery leads"
+• Filter by provider: "get klaviyo leads", "show facebook provider leads"
+• Add lead: "add lead [TeamName] [Domain] [Platform]"
+
+**Examples:**
+- "Show me all SHOPIFY leads"
+- "Get CONTRACT billing leads"
+- "List 1P type leads with klaviyo provider"
+- "Add lead AcmeCorp acme.com SHOPIFY"
+""",
+                "status": "ready",
+                "google_sheets_connected": USE_GOOGLE_SHEETS
             })
+        
+        # Handle get/show/list leads requests
+        elif any(word in query_lower for word in ["get", "show", "list", "find"]) and "lead" in query_lower:
+            filters = {}
             
-        elif method == "notifications/initialized":
-            logger.info("✅ Client initialized")
-            # Try to force tool discovery by sending a notification
-            logger.info("🎯 Attempting to trigger tool discovery...")
+            # Extract filters from query
+            # Platform filters
+            for platform in ["SHOPIFY", "WOOCOMMERCE", "EDGETAG", "BIGCOMMERCE", "SALESFORCE"]:
+                if platform.lower() in query_lower:
+                    filters["Platform"] = platform
             
-            # Return a hint about available tools
-            return JSONResponse({
-                "jsonrpc": "2.0",
-                "result": {
-                    "hint": "Tools available: get_crm_leads, add_crm_lead. Use tools/list to discover them.",
-                    "tools_ready": True
-                }
-            })
+            # Billing type filters
+            for billing in ["USAGE", "CONTRACT", "FREE"]:
+                if billing.lower() in query_lower:
+                    filters["BillingType"] = billing
             
-        elif method == "tools/list":
-            logger.info("🔧 TOOLS LIST CALLED! Sending tools...")
-            return JSONResponse({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "get_crm_leads",
-                            "description": "Retrieve leads from Google Sheets CRM with filtering options. Filters: platform (WOOCOMMERCE/SHOPIFY/EDGETAG/BIGCOMMERCE/SALESFORCE), billingtype (USAGE/SHOPIFY/CONTRACT/FREE), type (1P/2P), cartrecoverymode (N/A/disabled/enabled/preview/ab-test), providers (partial match)",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "platform": {
-                                        "type": "string",
-                                        "description": "Filter by platform: WOOCOMMERCE, SHOPIFY, EDGETAG, BIGCOMMERCE, SALESFORCE",
-                                        "enum": ["WOOCOMMERCE", "SHOPIFY", "EDGETAG", "BIGCOMMERCE", "SALESFORCE"]
-                                    },
-                                    "billingtype": {
-                                        "type": "string",
-                                        "description": "Filter by billing type: USAGE, SHOPIFY, CONTRACT, FREE",
-                                        "enum": ["USAGE", "SHOPIFY", "CONTRACT", "FREE"]
-                                    },
-                                    "type": {
-                                        "type": "string",
-                                        "description": "Filter by type: 1P or 2P",
-                                        "enum": ["1P", "2P"]
-                                    },
-                                    "cartrecoverymode": {
-                                        "type": "string",
-                                        "description": "Filter by cart recovery mode: N/A, disabled, enabled, preview, ab-test",
-                                        "enum": ["N/A", "disabled", "enabled", "preview", "ab-test"]
-                                    },
-                                    "providers": {
-                                        "type": "string",
-                                        "description": "Filter by provider (partial match): attentive, bing, blotoutWallet, customersAI, facebook, gcpPubSub, googleAdsClicks, googleAnalytics4, klaviyo, outOfTheBlue, pinterest, reddit, shopGPT, shopify, snapchat, tiktok, yotpo"
-                                    },
-                                    "domain": {
-                                        "type": "string",
-                                        "description": "Filter by domain (partial match)"
-                                    },
-                                    "limit": {
-                                        "type": "integer",
-                                        "description": "Maximum number of leads to return",
-                                        "default": 10
-                                    }
-                                }
-                            }
-                        },
-                        {
-                            "name": "add_crm_lead",
-                            "description": "Add a new lead to the Google Sheets CRM",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "teamname": {
-                                        "type": "string",
-                                        "description": "Team name"
-                                    },
-                                    "domain": {
-                                        "type": "string",
-                                        "description": "Domain name"
-                                    },
-                                    "platform": {
-                                        "type": "string",
-                                        "description": "Platform: WOOCOMMERCE, SHOPIFY, EDGETAG, BIGCOMMERCE, SALESFORCE",
-                                        "enum": ["WOOCOMMERCE", "SHOPIFY", "EDGETAG", "BIGCOMMERCE", "SALESFORCE"]
-                                    },
-                                    "billingtype": {
-                                        "type": "string",
-                                        "description": "Billing type: USAGE, SHOPIFY, CONTRACT, FREE",
-                                        "enum": ["USAGE", "SHOPIFY", "CONTRACT", "FREE"],
-                                        "default": "CONTRACT"
-                                    },
-                                    "type": {
-                                        "type": "string",
-                                        "description": "Type: 1P or 2P",
-                                        "enum": ["1P", "2P"],
-                                        "default": "1P"
-                                    },
-                                    "contacts": {
-                                        "type": "string",
-                                        "description": "Contact information"
-                                    }
-                                },
-                                "required": ["teamname", "domain", "platform"]
-                            }
-                        },
-                        {
-                            "name": "export_crm_leads",
-                            "description": "Export filtered leads to CSV format",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "platform": {
-                                        "type": "string",
-                                        "description": "Filter by platform"
-                                    },
-                                    "billingtype": {
-                                        "type": "string",
-                                        "description": "Filter by billing type"
-                                    },
-                                    "type": {
-                                        "type": "string",
-                                        "description": "Filter by type"
-                                    },
-                                    "cartrecoverymode": {
-                                        "type": "string",
-                                        "description": "Filter by cart recovery mode"
-                                    },
-                                    "providers": {
-                                        "type": "string",
-                                        "description": "Filter by provider"
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                }
-            })
+            # Type filters
+            if "1p" in query_lower:
+                filters["Type"] = "1P"
+            elif "2p" in query_lower:
+                filters["Type"] = "2P"
             
-        elif method == "tools/call":
-            tool_name = params.get("name")
-            tool_args = params.get("arguments", {})
-            logger.info(f"🔧 Tool call: {tool_name} with args: {tool_args}")
+            # Cart recovery filters
+            for mode in ["enabled", "disabled", "preview", "ab-test"]:
+                if mode in query_lower and "cart" in query_lower:
+                    filters["CartRecoveryMode"] = mode
             
-            if tool_name == "get_crm_leads":
-                # Build filters
-                filters = {}
-                if tool_args.get("platform"):
-                    filters["Platform"] = tool_args["platform"]
-                if tool_args.get("billingtype"):
-                    filters["BillingType"] = tool_args["billingtype"]
-                if tool_args.get("type"):
-                    filters["Type"] = tool_args["type"]
-                if tool_args.get("cartrecoverymode"):
-                    filters["CartRecoveryMode"] = tool_args["cartrecoverymode"]
-                if tool_args.get("providers"):
-                    filters["Providers"] = tool_args["providers"]
-                if tool_args.get("domain"):
-                    filters["Domain"] = tool_args["domain"]
-                
-                limit = tool_args.get("limit", 10)
-                
-                # Get filtered data
-                leads = get_filtered_data(filters)
-                if limit and limit > 0:
-                    leads = leads[:limit]
-                
-                # Format response
-                result_text = format_lead_response(leads)
-                
-                if not USE_GOOGLE_SHEETS:
-                    result_text = "⚠️ **Google Sheets not connected!**\n\nThe server is not connected to Google Sheets. Please ensure:\n1. GOOGLE_CLIENT_JSON environment variable is set on Railway\n2. The service account has access to your Google Sheet\n3. The sheet name is 'mcp' with tab 'Sheet1'\n\nCurrently returning empty results."
-                
-                return JSONResponse({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": result_text
-                            }
-                        ]
-                    }
-                })
+            # Provider filters
+            providers = ["klaviyo", "facebook", "shopify", "tiktok", "pinterest", "googleAnalytics4"]
+            for provider in providers:
+                if provider.lower() in query_lower:
+                    filters["Providers"] = provider
             
-            elif tool_name == "add_crm_lead":
+            # Get data
+            leads = get_filtered_data(filters)
+            
+            # Limit results
+            limit = 10
+            if "all" in query_lower:
+                limit = 100
+            elif any(f"{n} lead" in query_lower for n in ["5", "20", "25", "50"]):
+                for n in [5, 20, 25, 50]:
+                    if str(n) in query_lower:
+                        limit = n
+                        break
+            
+            leads = leads[:limit]
+            
+            if not leads:
                 if not USE_GOOGLE_SHEETS:
                     return JSONResponse({
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": {
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "❌ Cannot add lead: Google Sheets not connected. Please configure GOOGLE_CLIENT_JSON environment variable."
-                                }
-                            ]
-                        }
+                        "response": "❌ Google Sheets is not connected. Please set up GOOGLE_CLIENT_JSON environment variable in Railway.",
+                        "error": "no_connection"
                     })
-                
+                else:
+                    return JSONResponse({
+                        "response": "No leads found matching your criteria.",
+                        "filters_used": filters
+                    })
+            
+            # Format response
+            response_text = f"Found {len(leads)} leads"
+            if filters:
+                response_text += f" (filtered by: {', '.join([f'{k}={v}' for k,v in filters.items()])})"
+            response_text += ":\n\n"
+            
+            for i, lead in enumerate(leads, 1):
+                response_text += f"**{i}. {lead.get('TeamName', 'N/A')}**\n"
+                response_text += f"   • Domain: {lead.get('Domain', 'N/A')}\n"
+                response_text += f"   • Platform: {lead.get('Platform', 'N/A')}\n"
+                response_text += f"   • Billing: {lead.get('BillingType', 'N/A')}\n"
+                response_text += f"   • Type: {lead.get('Type', 'N/A')}\n"
+                response_text += f"   • Cart Recovery: {lead.get('CartRecoveryMode', 'N/A')}\n"
+                response_text += f"   • Revenue: ${lead.get('Revenue', '0')}\n"
+                if i < len(leads):
+                    response_text += "\n"
+            
+            return JSONResponse({
+                "response": response_text,
+                "count": len(leads),
+                "filters": filters
+            })
+        
+        # Handle add lead requests
+        elif "add lead" in query_lower:
+            if not USE_GOOGLE_SHEETS:
+                return JSONResponse({
+                    "response": "❌ Cannot add lead: Google Sheets not connected.",
+                    "error": "no_connection"
+                })
+            
+            # Parse add lead command
+            parts = query.split()
+            if len(parts) >= 5:  # "add lead TeamName Domain Platform"
                 try:
+                    idx = parts.index("lead") + 1
+                    team_name = parts[idx] if idx < len(parts) else "Unknown"
+                    domain = parts[idx + 1] if idx + 1 < len(parts) else "unknown.com"
+                    platform = parts[idx + 2].upper() if idx + 2 < len(parts) else "SHOPIFY"
+                    
+                    # Add to sheet
                     sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
-                    
-                    # Prepare row data based on column order
                     new_row = [
-                        "",  # TagId (auto-generated or empty)
-                        tool_args.get("teamname", ""),
-                        tool_args.get("domain", ""),
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # CreatedAt
-                        "",  # Versions
-                        "",  # LastDeployment
-                        tool_args.get("platform", ""),
-                        "Active",  # Status (default)
-                        "",  # OperationType
-                        "",  # Providers
-                        "",  # Plugins
-                        tool_args.get("billingtype", "CONTRACT"),
-                        tool_args.get("type", "1P"),
-                        tool_args.get("contacts", ""),
-                        "N/A",  # CartRecoveryMode (default)
-                        "0",  # Purchases
-                        "0",  # Revenue
-                        "0",  # LiveCarts
-                        "0",  # PotentialRevenue
-                        "0",  # CartExpiredPassiveUsers
-                        "0",  # LostRevenuePassiveUsers
-                        "0",  # CartExpiredActiveUsers
-                        "0",  # LostRevenueActiveUsers
-                        "0",  # EngagedVisitors
-                        "0",  # CartsRestored
-                        "0",  # RestoredValue
-                        "0",  # EmailsCaptured
-                        "0",  # TotalRecoveryPurchasesCount
-                        "0",  # TotalRecoveryPurchaseValue
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Created time
+                        "",  # TagId
+                        team_name,
+                        domain,
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "", "", # Versions, LastDeployment
+                        platform,
+                        "Active",
+                        "", "", "", # OperationType, Providers, Plugins
+                        "CONTRACT",
+                        "1P",
+                        "",  # Contacts
+                        "N/A",  # CartRecoveryMode
+                        "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0",  # All numeric fields
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ]
-                    
                     sheet.append_row(new_row)
                     
                     return JSONResponse({
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": {
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": f"✅ **Lead Added Successfully!**\n\n**Details:**\n- Team: {tool_args.get('teamname')}\n- Domain: {tool_args.get('domain')}\n- Platform: {tool_args.get('platform')}\n- Billing: {tool_args.get('billingtype', 'CONTRACT')}\n- Type: {tool_args.get('type', '1P')}\n- Contacts: {tool_args.get('contacts', 'N/A')}"
-                                }
-                            ]
-                        }
+                        "response": f"✅ Lead added successfully!\n\nTeam: {team_name}\nDomain: {domain}\nPlatform: {platform}",
+                        "success": True
                     })
                 except Exception as e:
-                    logger.error(f"Failed to add lead: {e}")
                     return JSONResponse({
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "error": {
-                            "code": -32603,
-                            "message": f"Failed to add lead: {str(e)}"
-                        }
+                        "response": f"❌ Failed to add lead: {str(e)}",
+                        "error": str(e)
                     })
-            
-            elif tool_name == "export_crm_leads":
-                # Build filters
-                filters = {}
-                for key in ["platform", "billingtype", "type", "cartrecoverymode", "providers"]:
-                    if tool_args.get(key):
-                        filter_key = key.capitalize()
-                        if key == "billingtype":
-                            filter_key = "BillingType"
-                        elif key == "cartrecoverymode":
-                            filter_key = "CartRecoveryMode"
-                        elif key == "providers":
-                            filter_key = "Providers"
-                        filters[filter_key] = tool_args[key]
-                
-                leads = get_filtered_data(filters)
-                
-                if not leads:
-                    return JSONResponse({
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": {
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "No leads found to export with the specified filters."
-                                }
-                            ]
-                        }
-                    })
-                
-                # Create CSV content
-                csv_content = "TagId,TeamName,Domain,Platform,BillingType,Type,CartRecoveryMode,Revenue,Contacts\n"
-                for lead in leads:
-                    csv_content += f"{lead.get('TagId', '')},{lead.get('TeamName', '')},{lead.get('Domain', '')},{lead.get('Platform', '')},{lead.get('BillingType', '')},{lead.get('Type', '')},{lead.get('CartRecoveryMode', '')},{lead.get('Revenue', '')},{lead.get('Contacts', '')}\n"
-                
-                return JSONResponse({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"✅ Exported {len(leads)} leads to CSV format:\n\n```csv\n{csv_content[:500]}{'...' if len(csv_content) > 500 else ''}\n```\n\n(Showing first 500 characters)"
-                            }
-                        ]
-                    }
-                })
-            
             else:
                 return JSONResponse({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32601,
-                        "message": f"Unknown tool: {tool_name}"
-                    }
+                    "response": "To add a lead, use: add lead [TeamName] [Domain] [Platform]\nExample: add lead AcmeCorp acme.com SHOPIFY",
+                    "error": "invalid_format"
                 })
         
+        # Default response
         else:
-            logger.warning(f"❓ Unknown method: {method}")
             return JSONResponse({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32601,
-                    "message": f"Method '{method}' not found"
-                }
+                "response": "I can help you manage CRM leads. Try:\n• 'Show all leads'\n• 'Get SHOPIFY leads'\n• 'List CONTRACT billing leads'\n• 'Help' for all commands",
+                "hint": "Use natural language to interact with the CRM"
             })
             
     except Exception as e:
-        logger.error(f"❌ Error processing request: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"Error: {e}")
         return JSONResponse({
-            "jsonrpc": "2.0",
-            "id": request_id if 'request_id' in locals() else None,
-            "error": {
-                "code": -32603,
-                "message": f"Internal server error: {str(e)}"
-            }
+            "response": f"Error: {str(e)}",
+            "error": str(e)
         }, status_code=500)
 
 @app.get("/")
 async def root():
-    """Status endpoint"""
     return {
-        "message": "CRM MCP Server v7.0", 
+        "message": "Simple CRM API Server",
         "status": "ready",
         "google_sheets_connected": USE_GOOGLE_SHEETS,
-        "sheet_name": SHEET_NAME if USE_GOOGLE_SHEETS else "Not connected",
-        "tools": ["get_crm_leads", "add_crm_lead", "export_crm_leads"],
-        "endpoints": {
-            "mcp": "POST /",
-            "simple": "POST /simple",
-            "direct_tool": "POST /tool/{tool_name}"
-        },
-        "filters": {
-            "platform": PLATFORM_OPTIONS,
-            "billingtype": BILLING_TYPE_OPTIONS,
-            "type": TYPE_OPTIONS,
-            "cartrecoverymode": CART_RECOVERY_MODE_OPTIONS,
-            "providers": PROVIDER_OPTIONS
-        }
+        "instructions": "Send POST requests with {\"query\": \"your command\"}"
     }
 
-@app.get("/tool/list")
-@app.post("/tool/list")
-async def tool_list_endpoint():
-    """Direct endpoint to list tools"""
-    return JSONResponse({
-        "tools": [
-            {
-                "name": "get_crm_leads",
-                "description": "Get leads with filters",
-                "filters": ["platform", "billingtype", "type", "cartrecoverymode", "providers"]
-            },
-            {
-                "name": "add_crm_lead",
-                "description": "Add new lead",
-                "required": ["teamname", "domain", "platform"]
+@app.get("/status")
+async def status():
+    if USE_GOOGLE_SHEETS:
+        try:
+            sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+            count = len(sheet.get_all_records())
+            return {
+                "connected": True,
+                "sheet": SHEET_NAME,
+                "records": count
             }
-        ],
-        "available_filters": {
-            "platform": PLATFORM_OPTIONS,
-            "billingtype": BILLING_TYPE_OPTIONS,
-            "type": TYPE_OPTIONS,
-            "cartrecoverymode": CART_RECOVERY_MODE_OPTIONS
-        }
-    })
-
-@app.post("/tool/{tool_name}")
-async def direct_tool_call(tool_name: str, request: Request):
-    """Direct tool invocation endpoint"""
-    try:
-        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
-        
-        logger.info(f"Direct tool call: {tool_name} with args: {body}")
-        
-        if tool_name == "get_crm_leads":
-            filters = {}
-            for key in ["Platform", "BillingType", "Type", "CartRecoveryMode", "Providers", "Domain"]:
-                if body.get(key.lower()):
-                    filters[key] = body[key.lower()]
-            
-            leads = get_filtered_data(filters)
-            limit = body.get("limit", 10)
-            leads = leads[:limit] if limit else leads
-            
-            return JSONResponse({
-                "success": True,
-                "count": len(leads),
-                "data": leads,
-                "message": format_lead_response(leads)
-            })
-        
-        elif tool_name == "list":
-            return JSONResponse({
-                "tools": [
-                    {"name": "get_crm_leads", "endpoint": "/tool/get_crm_leads"},
-                    {"name": "add_crm_lead", "endpoint": "/tool/add_crm_lead"}
-                ]
-            })
-        
-        else:
-            return JSONResponse({"error": f"Unknown tool: {tool_name}"}, status_code=404)
-            
-    except Exception as e:
-        logger.error(f"Direct tool error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/health")
-async def health():
-    return {
-        "status": "healthy", 
-        "version": "7.0.0",
-        "google_sheets_connected": USE_GOOGLE_SHEETS
-    }
+        except:
+            return {"connected": False, "error": "Failed to access sheet"}
+    else:
+        return {"connected": False, "message": "Google Sheets not configured"}
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("🚀 Starting CRM MCP Server on port 8000")
+    logger.info("🚀 Starting Simple CRM API Server on port 8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
