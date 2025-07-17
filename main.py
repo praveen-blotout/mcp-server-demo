@@ -120,6 +120,62 @@ async def log_requests(request: Request, call_next):
     logger.info(f"🟢 Response: {response.status_code}")
     return response
 
+@app.post("/simple")
+async def simple_endpoint(request: Request):
+    """Simple endpoint for when MCP tools disconnect"""
+    try:
+        body = await request.json()
+        action = body.get("action", "").lower()
+        
+        logger.info(f"Simple endpoint called with action: {action}")
+        
+        if "help" in action or not action:
+            return JSONResponse({
+                "message": "CRM Commands: 'get leads', 'get shopify leads', 'get contract billing leads', 'add lead [name] [domain] [platform]'",
+                "status": "ready"
+            })
+        
+        elif "get" in action and "lead" in action:
+            filters = {}
+            
+            # Parse filters from action
+            if "shopify" in action:
+                filters["Platform"] = "SHOPIFY"
+            if "woocommerce" in action:
+                filters["Platform"] = "WOOCOMMERCE"
+            if "contract" in action:
+                filters["BillingType"] = "CONTRACT"
+            if "usage" in action:
+                filters["BillingType"] = "USAGE"
+            if "1p" in action:
+                filters["Type"] = "1P"
+            if "2p" in action:
+                filters["Type"] = "2P"
+            
+            leads = get_filtered_data(filters)[:10]
+            
+            if not leads:
+                return JSONResponse({
+                    "message": "No leads found. Make sure Google Sheets is connected.",
+                    "connected": USE_GOOGLE_SHEETS
+                })
+            
+            response = f"Found {len(leads)} leads:\n"
+            for lead in leads:
+                response += f"- {lead.get('TeamName')} ({lead.get('Domain')}) - {lead.get('Platform')}\n"
+            
+            return JSONResponse({"message": response})
+        
+        else:
+            return JSONResponse({
+                "message": "Try: 'get leads' or 'get shopify leads'",
+                "status": "ready"
+            })
+            
+    except Exception as e:
+        logger.error(f"Simple endpoint error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.post("/")
 async def handle_mcp_request(request: Request):
     """MCP handler for Claude"""
@@ -488,6 +544,11 @@ async def root():
         "google_sheets_connected": USE_GOOGLE_SHEETS,
         "sheet_name": SHEET_NAME if USE_GOOGLE_SHEETS else "Not connected",
         "tools": ["get_crm_leads", "add_crm_lead", "export_crm_leads"],
+        "endpoints": {
+            "mcp": "POST /",
+            "simple": "POST /simple",
+            "direct_tool": "POST /tool/{tool_name}"
+        },
         "filters": {
             "platform": PLATFORM_OPTIONS,
             "billingtype": BILLING_TYPE_OPTIONS,
@@ -496,6 +557,46 @@ async def root():
             "providers": PROVIDER_OPTIONS
         }
     }
+
+@app.post("/tool/{tool_name}")
+async def direct_tool_call(tool_name: str, request: Request):
+    """Direct tool invocation endpoint"""
+    try:
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        
+        logger.info(f"Direct tool call: {tool_name} with args: {body}")
+        
+        if tool_name == "get_crm_leads":
+            filters = {}
+            for key in ["Platform", "BillingType", "Type", "CartRecoveryMode", "Providers", "Domain"]:
+                if body.get(key.lower()):
+                    filters[key] = body[key.lower()]
+            
+            leads = get_filtered_data(filters)
+            limit = body.get("limit", 10)
+            leads = leads[:limit] if limit else leads
+            
+            return JSONResponse({
+                "success": True,
+                "count": len(leads),
+                "data": leads,
+                "message": format_lead_response(leads)
+            })
+        
+        elif tool_name == "list":
+            return JSONResponse({
+                "tools": [
+                    {"name": "get_crm_leads", "endpoint": "/tool/get_crm_leads"},
+                    {"name": "add_crm_lead", "endpoint": "/tool/add_crm_lead"}
+                ]
+            })
+        
+        else:
+            return JSONResponse({"error": f"Unknown tool: {tool_name}"}, status_code=404)
+            
+    except Exception as e:
+        logger.error(f"Direct tool error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/health")
 async def health():
