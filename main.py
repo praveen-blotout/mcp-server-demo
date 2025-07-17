@@ -201,6 +201,26 @@ async def handle_mcp_request(request: Request):
                 }
             })
             
+        elif method == "resources/list":
+            logger.info("📚 Resources list requested")
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "resources": []  # No resources for this server
+                }
+            })
+            
+        elif method == "prompts/list":
+            logger.info("💬 Prompts list requested")
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "prompts": []  # No prompts for this server
+                }
+            })
+            
         elif method == "tools/call":
             tool_name = params.get("name")
             tool_args = params.get("arguments", {})
@@ -219,28 +239,62 @@ async def handle_mcp_request(request: Request):
                         }
                     })
                 
-                # Build filters
+                # Build filters - handle both lowercase and proper case
                 filters = {}
-                for key in ["Platform", "BillingType", "Type", "CartRecoveryMode", "Providers"]:
-                    param_key = key.lower()
-                    if param_key in tool_args and tool_args[param_key]:
-                        filters[key] = tool_args[param_key]
+                
+                # Platform filter
+                platform = tool_args.get("platform") or tool_args.get("Platform")
+                if platform:
+                    filters["Platform"] = platform
+                
+                # BillingType filter  
+                billingtype = tool_args.get("billingtype") or tool_args.get("BillingType")
+                if billingtype:
+                    filters["BillingType"] = billingtype
+                
+                # Type filter
+                type_filter = tool_args.get("type") or tool_args.get("Type")
+                if type_filter:
+                    filters["Type"] = type_filter
+                
+                # CartRecoveryMode filter
+                cartmode = tool_args.get("cartrecoverymode") or tool_args.get("CartRecoveryMode")
+                if cartmode:
+                    filters["CartRecoveryMode"] = cartmode
+                
+                # Providers filter
+                providers = tool_args.get("providers") or tool_args.get("Providers")
+                if providers:
+                    filters["Providers"] = providers
+                
+                logger.info(f"Applying filters: {filters}")
                 
                 leads = get_filtered_data(filters)
                 limit = tool_args.get("limit", 10)
                 leads = leads[:limit]
                 
                 if not leads:
-                    result_text = "No leads found. Check if:\n1. Google Sheets is connected\n2. Sheet 'mcp' with tab 'Sheet1' exists\n3. Sheet contains data"
+                    result_text = f"No leads found with filters: {filters}\n\n"
+                    if not USE_GOOGLE_SHEETS:
+                        result_text += "Note: Google Sheets is not connected."
+                    else:
+                        result_text += "Check if:\n1. Sheet 'mcp' exists\n2. Tab 'Sheet1' exists\n3. Data matches your filter criteria"
                 else:
-                    result_text = f"Found {len(leads)} leads:\n\n"
+                    result_text = f"Found {len(leads)} leads"
+                    if filters:
+                        result_text += f" (filtered by: {', '.join([f'{k}={v}' for k,v in filters.items()])})"
+                    result_text += ":\n\n"
+                    
                     for i, lead in enumerate(leads, 1):
                         result_text += f"**{i}. {lead.get('TeamName', 'N/A')}**\n"
-                        result_text += f"   Domain: {lead.get('Domain', 'N/A')}\n"
-                        result_text += f"   Platform: {lead.get('Platform', 'N/A')}\n"
-                        result_text += f"   Billing: {lead.get('BillingType', 'N/A')}\n"
-                        result_text += f"   Type: {lead.get('Type', 'N/A')}\n"
-                        result_text += f"   Revenue: ${lead.get('Revenue', '0')}\n\n"
+                        result_text += f"   • Domain: {lead.get('Domain', 'N/A')}\n"
+                        result_text += f"   • Platform: {lead.get('Platform', 'N/A')}\n"
+                        result_text += f"   • Billing: {lead.get('BillingType', 'N/A')}\n"
+                        result_text += f"   • Type: {lead.get('Type', 'N/A')}\n"
+                        result_text += f"   • Cart Recovery: {lead.get('CartRecoveryMode', 'N/A')}\n"
+                        result_text += f"   • Revenue: ${lead.get('Revenue', '0')}\n"
+                        if i < len(leads):
+                            result_text += "\n"
                 
                 return JSONResponse({
                     "jsonrpc": "2.0",
@@ -316,6 +370,17 @@ async def handle_mcp_request(request: Request):
                     }
                 })
         
+        elif method == "ping":
+            logger.info("🏓 Ping received")
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "status": "pong",
+                    "timestamp": datetime.now().isoformat()
+                }
+            })
+            
         # Handle unknown methods
         else:
             logger.warning(f"Unknown method: {method}")
