@@ -206,7 +206,17 @@ async def handle_mcp_request(request: Request):
             
         elif method == "notifications/initialized":
             logger.info("✅ Client initialized")
-            return Response(status_code=200)
+            # Try to force tool discovery by sending a notification
+            logger.info("🎯 Attempting to trigger tool discovery...")
+            
+            # Return a hint about available tools
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "result": {
+                    "hint": "Tools available: get_crm_leads, add_crm_lead. Use tools/list to discover them.",
+                    "tools_ready": True
+                }
+            })
             
         elif method == "tools/list":
             logger.info("🔧 TOOLS LIST CALLED! Sending tools...")
@@ -557,6 +567,31 @@ async def root():
             "providers": PROVIDER_OPTIONS
         }
     }
+
+@app.get("/tool/list")
+@app.post("/tool/list")
+async def tool_list_endpoint():
+    """Direct endpoint to list tools"""
+    return JSONResponse({
+        "tools": [
+            {
+                "name": "get_crm_leads",
+                "description": "Get leads with filters",
+                "filters": ["platform", "billingtype", "type", "cartrecoverymode", "providers"]
+            },
+            {
+                "name": "add_crm_lead",
+                "description": "Add new lead",
+                "required": ["teamname", "domain", "platform"]
+            }
+        ],
+        "available_filters": {
+            "platform": PLATFORM_OPTIONS,
+            "billingtype": BILLING_TYPE_OPTIONS,
+            "type": TYPE_OPTIONS,
+            "cartrecoverymode": CART_RECOVERY_MODE_OPTIONS
+        }
+    })
 
 @app.post("/tool/{tool_name}")
 async def direct_tool_call(tool_name: str, request: Request):
