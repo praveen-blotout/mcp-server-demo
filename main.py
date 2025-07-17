@@ -1,407 +1,348 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
 import json
+import sys
+import os
+from typing import Any, Dict, List, Optional
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import logging
 
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+# Google Sheets setup
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+google_creds_json = os.getenv("GOOGLE_CLIENT_JSON")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if google_creds_json:
+    try:
+        creds_dict = json.loads(google_creds_json)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        SHEET_NAME = "mcp"
+        TAB_NAME = "Sheet1"
+        USE_GOOGLE_SHEETS = True
+    except Exception as e:
+        logger.warning(f"Failed to initialize Google Sheets: {e}. Using mock data.")
+        USE_GOOGLE_SHEETS = False
+else:
+    logger.info("No Google credentials provided. Using mock data.")
+    USE_GOOGLE_SHEETS = False
 
-# Mock CRM data
+# Mock data for when Google Sheets is not available
 MOCK_LEADS = [
-    {"id": 1, "name": "John Doe", "email": "john@example.com", "phone": "+1234567890", "domain": "tech", "platform": "web"},
-    {"id": 2, "name": "Jane Smith", "email": "jane@example.com", "phone": "+1234567891", "domain": "finance", "platform": "mobile"},
-    {"id": 3, "name": "Bob Johnson", "email": "bob@example.com", "phone": "+1234567892", "domain": "tech", "platform": "web"},
-    {"id": 4, "name": "Alice Brown", "email": "alice@example.com", "phone": "+1234567893", "domain": "healthcare", "platform": "web"}
+    {"id": 1, "name": "John Doe", "email": "john@example.com", "phone": "+1234567890", "Domain": "tech", "Platform": "web", "BillingType": "monthly", "Type": "premium", "CartRecoveryMode": "auto"},
+    {"id": 2, "name": "Jane Smith", "email": "jane@example.com", "phone": "+1234567891", "Domain": "finance", "Platform": "mobile", "BillingType": "yearly", "Type": "basic", "CartRecoveryMode": "manual"},
+    {"id": 3, "name": "Bob Johnson", "email": "bob@example.com", "phone": "+1234567892", "Domain": "tech", "Platform": "web", "BillingType": "monthly", "Type": "premium", "CartRecoveryMode": "auto"},
+    {"id": 4, "name": "Alice Brown", "email": "alice@example.com", "phone": "+1234567893", "Domain": "healthcare", "Platform": "web", "BillingType": "yearly", "Type": "enterprise", "CartRecoveryMode": "manual"}
 ]
 
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    # Log the full request details for debugging
-    logger.info(f"🔵 {request.method} {request.url.path}")
-    if request.method == "POST":
-        body = await request.body()
-        logger.info(f"📥 Request body: {body.decode('utf-8') if body else 'Empty'}")
-        # Reset body for the actual handler
-        request._body = body
-    
-    response = await call_next(request)
-    logger.info(f"🟢 Response: {response.status_code}")
-    return response
+class MCPServer:
+    def __init__(self):
+        self.request_id = None
 
-@app.post("/")
-async def handle_mcp_request(request: Request):
-    try:
-        body = await request.json()
-        method = body.get("method")
-        request_id = body.get("id")
-        params = body.get("params", {})
+    async def handle_request(self, request: dict) -> dict:
+        """Handle incoming JSON-RPC requests"""
+        method = request.get("method")
+        params = request.get("params", {})
+        self.request_id = request.get("id")
         
-        logger.info(f"📨 MCP Method: {method}")
-        logger.info(f"📋 Full request: {json.dumps(body, indent=2)}")
+        logger.info(f"Received method: {method}")
         
         if method == "initialize":
-            logger.info("🚀 Initialize - declaring tools capability")
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {
-                        "tools": {},
-                        "supportsToolList": True
-                    },
-                    "serverInfo": {
-                        "name": "final-crm-server",
-                        "version": "4.0.0"
-                    },
-                    "instructions": "This server provides CRM tools. Use tools/list to discover available tools."
+            return self.handle_initialize(params)
+        elif method == "notifications/initialized":
+            return None  # No response needed for notification
+        elif method == "tools/list":
+            return self.handle_tools_list()
+        elif method == "tools/call":
+            return await self.handle_tool_call(params)
+        else:
+            return self.error_response(-32601, f"Method not found: {method}")
+
+    def handle_initialize(self, params: dict) -> dict:
+        """Handle initialization request"""
+        return {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "crm-mcp-server",
+                    "version": "1.0.0"
                 }
             }
-            logger.info(f"📤 Initialize response: {json.dumps(response, indent=2)}")
-            return JSONResponse(response)
-            
-        elif method == "notifications/initialized":
-            logger.info("✅ Client initialized - ready for tool requests")
-            # Send a proactive notification about tools being available
-            logger.info("📢 Sending tools/changed notification to prompt tool discovery")
-            
-            # First acknowledge the notification
-            return JSONResponse({
-                "jsonrpc": "2.0",
-                "method": "notifications/tools/changed",
-                "params": {
-                    "hint": "Tools are available. Call tools/list to discover them."
-                }
-            })
-            
-        elif method == "tools/list":
-            logger.info("🔧 TOOLS LIST CALLED! Sending tools...")
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "get_crm_leads",
-                            "description": "Retrieve leads from the CRM system with optional filtering by domain and platform",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "domain": {
-                                        "type": "string",
-                                        "description": "Filter leads by business domain (e.g., tech, finance, healthcare)"
-                                    },
-                                    "platform": {
-                                        "type": "string",
-                                        "description": "Filter leads by platform (e.g., web, mobile)"
-                                    },
-                                    "limit": {
-                                        "type": "integer",
-                                        "description": "Maximum number of leads to return (default: 10)",
-                                        "minimum": 1,
-                                        "maximum": 100,
-                                        "default": 10
-                                    }
+        }
+
+    def handle_tools_list(self) -> dict:
+        """Return list of available tools"""
+        return {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "result": {
+                "tools": [
+                    {
+                        "name": "get_crm_leads",
+                        "description": "Retrieve CRM leads with optional filtering by domain, platform, billing type, type, and cart recovery mode",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "domain": {
+                                    "type": "string",
+                                    "description": "Filter by business domain (e.g., tech, finance, healthcare)"
+                                },
+                                "platform": {
+                                    "type": "string",
+                                    "description": "Filter by platform (e.g., web, mobile)"
+                                },
+                                "billingtype": {
+                                    "type": "string",
+                                    "description": "Filter by billing type (e.g., monthly, yearly)"
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "description": "Filter by account type (e.g., basic, premium, enterprise)"
+                                },
+                                "cartrecoverymode": {
+                                    "type": "string",
+                                    "description": "Filter by cart recovery mode (e.g., auto, manual)"
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Maximum number of leads to return",
+                                    "default": 10
                                 }
                             }
-                        },
-                        {
-                            "name": "add_crm_lead",
-                            "description": "Add a new lead to the CRM system with name, email, and phone number",
-                            "inputSchema": {
-                                "type": "object", 
-                                "properties": {
-                                    "name": {
-                                        "type": "string",
-                                        "description": "Full name of the lead"
-                                    },
-                                    "email": {
-                                        "type": "string",
-                                        "description": "Email address of the lead"
-                                    },
-                                    "phone": {
-                                        "type": "string",
-                                        "description": "Phone number of the lead"
-                                    }
+                        }
+                    },
+                    {
+                        "name": "add_crm_lead",
+                        "description": "Add a new lead to the CRM system",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "Full name of the lead"
                                 },
-                                "required": ["name", "email", "phone"]
-                            }
+                                "email": {
+                                    "type": "string",
+                                    "description": "Email address of the lead"
+                                },
+                                "phone": {
+                                    "type": "string",
+                                    "description": "Phone number of the lead"
+                                },
+                                "domain": {
+                                    "type": "string",
+                                    "description": "Business domain",
+                                    "default": "unknown"
+                                },
+                                "platform": {
+                                    "type": "string",
+                                    "description": "Platform",
+                                    "default": "unknown"
+                                }
+                            },
+                            "required": ["name", "email", "phone"]
+                        }
+                    },
+                    {
+                        "name": "add_numbers",
+                        "description": "Add two numbers together",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "a": {
+                                    "type": "number",
+                                    "description": "First number"
+                                },
+                                "b": {
+                                    "type": "number",
+                                    "description": "Second number"
+                                }
+                            },
+                            "required": ["a", "b"]
+                        }
+                    }
+                ]
+            }
+        }
+
+    async def handle_tool_call(self, params: dict) -> dict:
+        """Handle tool execution"""
+        tool_name = params.get("name")
+        arguments = params.get("arguments", {})
+        
+        logger.info(f"Tool call: {tool_name} with args: {arguments}")
+        
+        try:
+            if tool_name == "get_crm_leads":
+                result = self.get_crm_leads(**arguments)
+            elif tool_name == "add_crm_lead":
+                result = self.add_crm_lead(**arguments)
+            elif tool_name == "add_numbers":
+                result = self.add_numbers(**arguments)
+            else:
+                return self.error_response(-32602, f"Unknown tool: {tool_name}")
+            
+            return {
+                "jsonrpc": "2.0",
+                "id": self.request_id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": result
                         }
                     ]
                 }
             }
-            logger.info(f"📤 Tools list response: {json.dumps(response, indent=2)}")
-            return JSONResponse(response)
-            
-        elif method == "tools/call":
-            tool_name = params.get("name")
-            tool_args = params.get("arguments", {})
-            logger.info(f"🔧 Tool call: {tool_name} with args: {tool_args}")
-            
-            if tool_name == "get_crm_leads":
-                filtered_leads = MOCK_LEADS.copy()
-                
-                if "domain" in tool_args:
-                    domain = tool_args["domain"].lower()
-                    filtered_leads = [lead for lead in filtered_leads if domain in lead["domain"].lower()]
-                
-                if "platform" in tool_args:
-                    platform = tool_args["platform"].lower()
-                    filtered_leads = [lead for lead in filtered_leads if platform in lead["platform"].lower()]
-                
-                limit = min(tool_args.get("limit", 10), 100)
-                filtered_leads = filtered_leads[:limit]
-                
-                result_text = f"Found {len(filtered_leads)} leads:\n\n"
-                for lead in filtered_leads:
-                    result_text += f"• **{lead['name']}**\n"
-                    result_text += f"  📧 {lead['email']}\n"
-                    result_text += f"  📞 {lead['phone']}\n"
-                    result_text += f"  🏢 {lead['domain']} | 📱 {lead['platform']}\n\n"
-                
-                if not filtered_leads:
-                    result_text = "No leads found matching the specified criteria."
-                
-                return JSONResponse({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": result_text
-                            }
-                        ]
-                    }
-                })
-            
-            elif tool_name == "add_crm_lead":
-                name = tool_args.get("name")
-                email = tool_args.get("email")
-                phone = tool_args.get("phone")
-                
-                if not all([name, email, phone]):
-                    return JSONResponse({
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "error": {
-                            "code": -32602,
-                            "message": "Missing required parameters. Name, email, and phone are all required."
-                        }
-                    })
-                
-                new_lead = {
-                    "id": len(MOCK_LEADS) + 1,
-                    "name": name,
-                    "email": email,
-                    "phone": phone,
-                    "domain": "unknown",
-                    "platform": "unknown"
-                }
-                MOCK_LEADS.append(new_lead)
-                
-                return JSONResponse({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"✅ **Lead Added Successfully!**\n\n📝 **Name:** {name}\n📧 **Email:** {email}\n📞 **Phone:** {phone}\n\nThe lead has been added to the CRM system and is now available for retrieval."
-                            }
-                        ]
-                    }
-                })
-            
-            else:
-                return JSONResponse({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32601,
-                        "message": f"Unknown tool: {tool_name}. Available tools: get_crm_leads, add_crm_lead"
-                    }
-                })
-        
-        else:
-            logger.warning(f"❓ Unknown method: {method}")
-            # Log all available methods for debugging
-            logger.info("Available methods: initialize, notifications/initialized, tools/list, tools/call")
-            return JSONResponse({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32601,
-                    "message": f"Method '{method}' not found. Available methods: initialize, notifications/initialized, tools/list, tools/call"
-                }
-            })
-            
-    except Exception as e:
-        logger.error(f"❌ Error processing request: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return JSONResponse({
-            "jsonrpc": "2.0",
-            "id": request_id if 'request_id' in locals() else None,
-            "error": {
-                "code": -32603,
-                "message": f"Internal server error: {str(e)}"
-            }
-        }, status_code=500)
+        except Exception as e:
+            logger.error(f"Tool execution error: {e}")
+            return self.error_response(-32603, str(e))
 
-@app.get("/")
-async def root():
-    return {
-        "message": "Final CRM MCP Server v4.0", 
-        "status": "ready",
-        "tools": ["get_crm_leads", "add_crm_lead"],
-        "leads_count": len(MOCK_LEADS),
-        "endpoints": {
-            "mcp": "POST /",
-            "health": "GET /health",
-            "debug_tools": "GET /debug/tools",
-            "test_tools_list": "POST /test/tools/list"
-        }
-    }
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy", "version": "4.0.0", "leads_count": len(MOCK_LEADS)}
-
-# Debug endpoint to manually check tools
-@app.get("/debug/tools")
-async def debug_tools():
-    return {
-        "status": "available",
-        "tools": [
-            {
-                "name": "get_crm_leads",
-                "description": "Get CRM leads with filters",
-                "params": ["domain", "platform", "limit"]
-            },
-            {
-                "name": "add_crm_lead", 
-                "description": "Add new lead to CRM",
-                "params": ["name", "email", "phone"]
-            }
-        ],
-        "sample_requests": {
-            "get_leads": {
-                "method": "tools/call",
-                "params": {
-                    "name": "get_crm_leads",
-                    "arguments": {"domain": "tech", "limit": 5}
-                }
-            },
-            "add_lead": {
-                "method": "tools/call",
-                "params": {
-                    "name": "add_crm_lead",
-                    "arguments": {
-                        "name": "Test User",
-                        "email": "test@example.com",
-                        "phone": "+1234567890"
-                    }
-                }
-            }
-        }
-    }
-
-# Test endpoint to manually trigger tools/list
-@app.post("/test/tools/list")
-async def test_tools_list():
-    return {
-        "jsonrpc": "2.0",
-        "id": "test-1",
-        "result": {
-            "tools": [
-                {
-                    "name": "get_crm_leads",
-                    "description": "Retrieve leads from the CRM system"
-                },
-                {
-                    "name": "add_crm_lead",
-                    "description": "Add a new lead to the CRM system"
-                }
-            ]
-        }
-    }
-
-@app.post("/claude-connector")
-async def claude_connector_endpoint(request: Request):
-    """Simplified endpoint for Claude web custom connector"""
-    try:
-        body = await request.json()
-        user_input = body.get("prompt", body.get("action", body.get("message", "")))
-        logger.info(f"Claude connector request: {user_input}")
-        
-        # Simple pattern matching for actions
-        if any(word in user_input.lower() for word in ["help", "what can", "commands"]):
-            return JSONResponse({
-                "text": "I can help you manage CRM leads:\n- Say 'get leads' to list all leads\n- Say 'get tech leads' for tech domain leads\n- Say 'add lead John Doe john@example.com +1234567890' to add a lead"
-            })
-        
-        elif any(word in user_input.lower() for word in ["get", "show", "list"]) and "lead" in user_input.lower():
-            # Simulate calling the MCP get_crm_leads tool
-            filtered_leads = MOCK_LEADS.copy()
-            
-            if "tech" in user_input.lower():
-                filtered_leads = [l for l in filtered_leads if l["domain"] == "tech"]
-            elif "mobile" in user_input.lower():
-                filtered_leads = [l for l in filtered_leads if l["platform"] == "mobile"]
-            
-            result = "CRM Leads:\n\n"
-            for lead in filtered_leads:
-                result += f"• {lead['name']} - {lead['email']} ({lead['domain']})\n"
-            
-            return JSONResponse({"text": result})
-        
-        elif "add lead" in user_input.lower():
-            # Parse add lead command
-            parts = user_input.split()
+    def get_crm_leads(self, domain=None, platform=None, billingtype=None, 
+                      type=None, cartrecoverymode=None, limit=10):
+        """Get filtered CRM leads"""
+        if USE_GOOGLE_SHEETS:
             try:
-                idx = parts.index("lead") + 1
-                if idx + 2 < len(parts):
-                    name = parts[idx]
-                    email = parts[idx + 1]
-                    phone = parts[idx + 2] if idx + 2 < len(parts) else "+0000000000"
-                    
-                    new_lead = {
-                        "id": len(MOCK_LEADS) + 1,
-                        "name": name,
-                        "email": email,
-                        "phone": phone,
-                        "domain": "unknown",
-                        "platform": "unknown"
-                    }
-                    MOCK_LEADS.append(new_lead)
-                    
-                    return JSONResponse({
-                        "text": f"✅ Lead added: {name} ({email})"
-                    })
-            except:
-                pass
-            
-            return JSONResponse({
-                "text": "To add a lead, use: add lead [name] [email] [phone]"
-            })
-        
+                sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+                rows = sheet.get_all_records()
+                
+                # Apply filters
+                filtered = []
+                for row in rows:
+                    if domain and domain.lower() not in str(row.get("Domain", "")).lower():
+                        continue
+                    if platform and platform.lower() not in str(row.get("Platform", "")).lower():
+                        continue
+                    if billingtype and billingtype.lower() not in str(row.get("BillingType", "")).lower():
+                        continue
+                    if type and type.lower() not in str(row.get("Type", "")).lower():
+                        continue
+                    if cartrecoverymode and cartrecoverymode.lower() not in str(row.get("CartRecoveryMode", "")).lower():
+                        continue
+                    filtered.append(row)
+                
+                leads = filtered[:limit]
+            except Exception as e:
+                logger.error(f"Google Sheets error: {e}")
+                leads = MOCK_LEADS
         else:
-            return JSONResponse({
-                "text": "I can help with CRM leads. Try 'get leads' or 'add lead [name] [email] [phone]'"
-            })
+            # Use mock data
+            leads = MOCK_LEADS.copy()
             
-    except Exception as e:
-        logger.error(f"Claude connector error: {e}")
-        return JSONResponse({"text": f"Error: {str(e)}"}, status_code=500)
+            # Apply filters
+            if domain:
+                leads = [l for l in leads if domain.lower() in l.get("Domain", "").lower()]
+            if platform:
+                leads = [l for l in leads if platform.lower() in l.get("Platform", "").lower()]
+            if billingtype:
+                leads = [l for l in leads if billingtype.lower() in l.get("BillingType", "").lower()]
+            if type:
+                leads = [l for l in leads if type.lower() in l.get("Type", "").lower()]
+            if cartrecoverymode:
+                leads = [l for l in leads if cartrecoverymode.lower() in l.get("CartRecoveryMode", "").lower()]
+            
+            leads = leads[:limit]
+        
+        # Format response
+        if not leads:
+            return "No leads found matching the specified criteria."
+        
+        result = f"Found {len(leads)} leads:\n\n"
+        for lead in leads:
+            result += f"**{lead.get('name', 'N/A')}**\n"
+            result += f"- Email: {lead.get('email', 'N/A')}\n"
+            result += f"- Phone: {lead.get('phone', 'N/A')}\n"
+            result += f"- Domain: {lead.get('Domain', 'N/A')}\n"
+            result += f"- Platform: {lead.get('Platform', 'N/A')}\n"
+            result += f"- Billing: {lead.get('BillingType', 'N/A')}\n"
+            result += f"- Type: {lead.get('Type', 'N/A')}\n"
+            result += f"- Cart Recovery: {lead.get('CartRecoveryMode', 'N/A')}\n\n"
+        
+        return result
+
+    def add_crm_lead(self, name, email, phone, domain="unknown", platform="unknown"):
+        """Add a new lead to the CRM"""
+        if USE_GOOGLE_SHEETS:
+            try:
+                sheet = client.open(SHEET_NAME).worksheet(TAB_NAME)
+                # Assuming the sheet has these columns in order
+                sheet.append_row([name, email, phone, domain, platform, "monthly", "basic", "manual"])
+                return f"✅ Lead added successfully!\n\nName: {name}\nEmail: {email}\nPhone: {phone}\nDomain: {domain}\nPlatform: {platform}"
+            except Exception as e:
+                logger.error(f"Failed to add lead to Google Sheets: {e}")
+                return f"❌ Failed to add lead: {str(e)}"
+        else:
+            # Add to mock data
+            new_lead = {
+                "id": len(MOCK_LEADS) + 1,
+                "name": name,
+                "email": email,
+                "phone": phone,
+                "Domain": domain,
+                "Platform": platform,
+                "BillingType": "monthly",
+                "Type": "basic",
+                "CartRecoveryMode": "manual"
+            }
+            MOCK_LEADS.append(new_lead)
+            return f"✅ Lead added successfully!\n\nName: {name}\nEmail: {email}\nPhone: {phone}\nDomain: {domain}\nPlatform: {platform}"
+
+    def add_numbers(self, a, b):
+        """Add two numbers together"""
+        result = a + b
+        return f"The sum of {a} + {b} = {result}"
+
+    def error_response(self, code: int, message: str) -> dict:
+        """Create an error response"""
+        return {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "error": {
+                "code": code,
+                "message": message
+            }
+        }
+
+async def main():
+    """Main entry point for the MCP server"""
+    server = MCPServer()
+    
+    logger.info("MCP Server started, waiting for requests...")
+    
+    # Read from stdin and write to stdout (JSON-RPC over stdio)
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if not line:
+                break
+                
+            request = json.loads(line)
+            logger.info(f"Received: {request}")
+            
+            response = await server.handle_request(request)
+            
+            if response:  # Some notifications don't require a response
+                print(json.dumps(response))
+                sys.stdout.flush()
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e}")
+        except KeyboardInterrupt:
+            logger.info("Server stopped by user")
+            break
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            error_response = server.error_response(-32603, f"Internal error: {str(e)}")
+            print(json.dumps(error_response))
+            sys.stdout.flush()
+
+if __name__ == "__main__":
+    asyncio.run(main())
