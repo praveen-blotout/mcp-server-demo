@@ -58,12 +58,14 @@ async def handle_mcp_request(request: Request):
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
-                        "tools": {}
+                        "tools": {},
+                        "supportsToolList": True
                     },
                     "serverInfo": {
                         "name": "final-crm-server",
                         "version": "4.0.0"
-                    }
+                    },
+                    "instructions": "This server provides CRM tools. Use tools/list to discover available tools."
                 }
             }
             logger.info(f"📤 Initialize response: {json.dumps(response, indent=2)}")
@@ -71,8 +73,17 @@ async def handle_mcp_request(request: Request):
             
         elif method == "notifications/initialized":
             logger.info("✅ Client initialized - ready for tool requests")
-            # Just acknowledge the notification
-            return Response(status_code=200)
+            # Send a proactive notification about tools being available
+            logger.info("📢 Sending tools/changed notification to prompt tool discovery")
+            
+            # First acknowledge the notification
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "method": "notifications/tools/changed",
+                "params": {
+                    "hint": "Tools are available. Call tools/list to discover them."
+                }
+            })
             
         elif method == "tools/list":
             logger.info("🔧 TOOLS LIST CALLED! Sending tools...")
@@ -327,7 +338,70 @@ async def test_tools_list():
         }
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    logger.info("🚀 Starting MCP Server on port 8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.post("/claude-connector")
+async def claude_connector_endpoint(request: Request):
+    """Simplified endpoint for Claude web custom connector"""
+    try:
+        body = await request.json()
+        user_input = body.get("prompt", body.get("action", body.get("message", "")))
+        logger.info(f"Claude connector request: {user_input}")
+        
+        # Simple pattern matching for actions
+        if any(word in user_input.lower() for word in ["help", "what can", "commands"]):
+            return JSONResponse({
+                "text": "I can help you manage CRM leads:\n- Say 'get leads' to list all leads\n- Say 'get tech leads' for tech domain leads\n- Say 'add lead John Doe john@example.com +1234567890' to add a lead"
+            })
+        
+        elif any(word in user_input.lower() for word in ["get", "show", "list"]) and "lead" in user_input.lower():
+            # Simulate calling the MCP get_crm_leads tool
+            filtered_leads = MOCK_LEADS.copy()
+            
+            if "tech" in user_input.lower():
+                filtered_leads = [l for l in filtered_leads if l["domain"] == "tech"]
+            elif "mobile" in user_input.lower():
+                filtered_leads = [l for l in filtered_leads if l["platform"] == "mobile"]
+            
+            result = "CRM Leads:\n\n"
+            for lead in filtered_leads:
+                result += f"• {lead['name']} - {lead['email']} ({lead['domain']})\n"
+            
+            return JSONResponse({"text": result})
+        
+        elif "add lead" in user_input.lower():
+            # Parse add lead command
+            parts = user_input.split()
+            try:
+                idx = parts.index("lead") + 1
+                if idx + 2 < len(parts):
+                    name = parts[idx]
+                    email = parts[idx + 1]
+                    phone = parts[idx + 2] if idx + 2 < len(parts) else "+0000000000"
+                    
+                    new_lead = {
+                        "id": len(MOCK_LEADS) + 1,
+                        "name": name,
+                        "email": email,
+                        "phone": phone,
+                        "domain": "unknown",
+                        "platform": "unknown"
+                    }
+                    MOCK_LEADS.append(new_lead)
+                    
+                    return JSONResponse({
+                        "text": f"✅ Lead added: {name} ({email})"
+                    })
+            except:
+                pass
+            
+            return JSONResponse({
+                "text": "To add a lead, use: add lead [name] [email] [phone]"
+            })
+        
+        else:
+            return JSONResponse({
+                "text": "I can help with CRM leads. Try 'get leads' or 'add lead [name] [email] [phone]'"
+            })
+            
+    except Exception as e:
+        logger.error(f"Claude connector error: {e}")
+        return JSONResponse({"text": f"Error: {str(e)}"}, status_code=500)
